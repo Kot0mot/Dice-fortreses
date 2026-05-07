@@ -1,0 +1,12 @@
+{
+  "seed": 6,
+  "actions": [
+    { "type": "reroll_or_keep", "value": "keep" },
+    { "type": "slots", "build": [2, 1], "fortify": [1], "arm": [3] },
+    { "type": "build_cmd", "cmd": "new", "x": 5, "y": 6, "spend": 3 },
+
+    { "type": "reroll_or_keep", "value": "keep" },
+    { "type": "slots", "build": [2, 1], "fortify": [2], "arm": [3] },
+    { "type": "build_cmd", "cmd": "new", "x": 4, "y": 6, "spend": 3 }
+  ]
+}
