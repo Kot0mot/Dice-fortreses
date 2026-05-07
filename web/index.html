@@ -7,46 +7,121 @@
         <link rel="stylesheet" href="./styles.css" />
     </head>
     <body>
-        <main class="layout">
-            <section class="panel">
-                <h2>Status</h2>
-                <div id="status"></div>
-                <div id="run-controls"></div>
-                <input id="load-run-input" type="file" accept="application/json,.json" hidden />
+        <main class="app-shell">
+            <section id="menu-screen" class="screen">
+                <div class="menu-card panel">
+                    <h1>Dice Fortresses</h1>
+                    <p class="muted">Choose mode, tune options, and start a new match.</p>
+                    <div class="menu-actions">
+                        <button id="menu-mode-vsbot" type="button">Play vs Bot</button>
+                        <button id="menu-mode-hotseat" type="button">Hot-seat (2 players)</button>
+                        <button id="menu-how-to-play" type="button">How to Play</button>
+                    </div>
+                    <section class="settings panel">
+                        <h2>Settings</h2>
+                        <label class="settings-row">
+                            <span>Seed</span>
+                            <input id="menu-seed-input" type="number" inputmode="numeric" placeholder="Random seed" />
+                        </label>
+                        <label class="settings-row">
+                            <span>Sound</span>
+                            <input id="menu-sound-toggle" type="checkbox" />
+                        </label>
+                    </section>
+                    <button id="menu-start-game" type="button" class="start-button" disabled>Start Game</button>
+                </div>
             </section>
 
-            <section class="panel">
-                <h2>Roll / Reroll</h2>
-                <div id="roll-panel"></div>
+            <section id="tutorial-screen" class="screen hidden">
+                <div class="menu-card panel">
+                    <h1>How to Play</h1>
+                    <div class="tutorial-blocks">
+                        <section class="panel">
+                            <h2>1) Goal</h2>
+                            <p>Break the enemy core before they break yours.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>2) Dice and Slots</h2>
+                            <p>Each die goes to Build, Fortify, or Arm and powers that phase.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>3) What Each Phase Does</h2>
+                            <p>Roll and choose hand, commit slots, build/repair, fire Arm, then end turn.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>4) First Match Strategy</h2>
+                            <p>Build around your core first, keep Fortify stocked, and focus Arm on one column.</p>
+                        </section>
+                    </div>
+                    <div>
+                        <button id="tutorial-back" type="button">Back</button>
+                        <button id="tutorial-practice" type="button">Start Practice Match</button>
+                    </div>
+                </div>
             </section>
 
-            <section class="panel">
-                <h2>Slots</h2>
-                <div id="slots-panel"></div>
-            </section>
+            <section id="game-screen" class="screen hidden">
+                <header class="top-bar panel">
+                    <div id="topbar-mode"></div>
+                    <div id="topbar-round"></div>
+                    <div id="topbar-player"></div>
+                    <button id="back-to-menu" type="button">Back to Menu</button>
+                </header>
+                <div class="layout">
+                    <section class="panel">
+                        <h2>Status</h2>
+                        <div id="status"></div>
+                        <div id="next-action" class="next-action"></div>
+                        <div id="run-controls"></div>
+                        <input id="load-run-input" type="file" accept="application/json,.json" hidden />
+                    </section>
 
-            <section class="panel">
-                <h2>Build</h2>
-                <div id="build-panel"></div>
-            </section>
+                    <section class="panel">
+                        <h2>Roll / Reroll</h2>
+                        <div id="roll-panel"></div>
+                    </section>
 
-            <section class="panel">
-                <h2>Arm</h2>
-                <div id="arm-panel"></div>
-            </section>
+                    <section class="panel">
+                        <h2>Slots</h2>
+                        <div id="slots-panel"></div>
+                    </section>
 
-            <section class="panel board-panel">
-                <h2>Field</h2>
-                <div id="board-legend" class="board-legend"></div>
-                <div id="board" class="board"></div>
-            </section>
+                    <section class="panel">
+                        <h2>Build</h2>
+                        <div id="build-panel"></div>
+                    </section>
 
-            <section class="panel log-panel">
-                <h2>Turn Log</h2>
-                <div id="log-controls"></div>
-                <div id="log-list" class="log-list"></div>
+                    <section class="panel">
+                        <h2>Arm</h2>
+                        <div id="arm-panel"></div>
+                    </section>
+
+                    <section class="panel board-panel">
+                        <h2>Field</h2>
+                        <div id="board-legend" class="board-legend"></div>
+                        <div id="board" class="board"></div>
+                    </section>
+
+                    <section class="panel log-panel">
+                        <h2>Turn Log</h2>
+                        <div id="log-controls"></div>
+                        <div id="log-list" class="log-list"></div>
+                    </section>
+                </div>
             </section>
         </main>
+        <div id="notice" class="notice" aria-live="polite"></div>
+        <section id="endgame-overlay" class="overlay hidden" aria-live="polite">
+            <div class="overlay-card panel">
+                <h2 id="endgame-title">Victory</h2>
+                <div id="endgame-stats" class="muted"></div>
+                <div class="overlay-actions">
+                    <button id="play-again-btn" type="button">Play Again</button>
+                    <button id="end-back-to-menu-btn" type="button">Back to Menu</button>
+                </div>
+            </div>
+        </section>
+        <div id="tutorial-overlay" class="tutorial-overlay hidden"></div>
         <script type="module" src="./app.ts"></script>
     </body>
 </html>

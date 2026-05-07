@@ -14,6 +14,8 @@ export interface SavedUiState {
     buildBudgetLeft: number;
     repairUsed: Record<string, number>;
     lastMessage: string;
+    gameMode?: "hotseat" | "vsBot";
+    isBotActing?: boolean;
 }
 
 export interface SavedRunFile {
@@ -53,6 +55,12 @@ function assertValidSavedUiState(value: unknown): asserts value is SavedUiState 
     }
     if (!isObject(value.repairUsed)) throw new RunSaveFormatError("Invalid save: uiState.repairUsed must be an object.");
     if (typeof value.lastMessage !== "string") throw new RunSaveFormatError("Invalid save: uiState.lastMessage must be string.");
+    if (value.gameMode !== undefined && value.gameMode !== "hotseat" && value.gameMode !== "vsBot") {
+        throw new RunSaveFormatError("Invalid save: uiState.gameMode must be hotseat or vsBot.");
+    }
+    if (value.isBotActing !== undefined && typeof value.isBotActing !== "boolean") {
+        throw new RunSaveFormatError("Invalid save: uiState.isBotActing must be boolean.");
+    }
 }
 
 function assertValidMatchState(value: unknown): asserts value is MatchState {

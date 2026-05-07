@@ -24,6 +24,8 @@ describe("run save format", () => {
                 buildBudgetLeft: 3,
                 repairUsed: {},
                 lastMessage: "ok",
+                gameMode: "vsBot" as const,
+                isBotActing: true,
             },
             matchState: patchedMatch,
             log: ["event-1"],
@@ -32,6 +34,8 @@ describe("run save format", () => {
         expect(decoded.seed).toBe(payload.seed);
         expect(decoded.rngState).toBe(payload.rngState);
         expect(decoded.uiState.phase).toBe("build");
+        expect(decoded.uiState.gameMode).toBe("vsBot");
+        expect(decoded.uiState.isBotActing).toBe(true);
         expect(decoded.matchState.width).toBe(12);
         expect(decoded.matchState.currentPlayer).toBe(1);
         expect(decoded.matchState.grid[1]?.[0]?.hp).toBe(2);

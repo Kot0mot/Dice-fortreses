@@ -18,7 +18,7 @@
 
 ## Known Limitations (v0.1.0)
 
-- Local hot-seat flow only; no multiplayer network mode.
+- Local-only play flow (hot-seat and vs-bot); no multiplayer network mode.
 - No backend service, account system, or cloud persistence.
 - Replay/demo scenarios are narrow and do not cover full strategic depth.
 - Web rendering and UX remain MVP-level (limited polish/performance tuning).
