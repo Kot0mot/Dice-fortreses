@@ -23,16 +23,15 @@ export function isWithinFiringCone(
     shooterX: number, shooterY: number,
     targetX: number, targetY: number,
     owner: OwnerId,
-    coneHalfAngleDeg: number = 45
+    coneHalfAngleDeg: number = 60
 ): boolean {
     const dx = targetX - shooterX;
     const dy = targetY - shooterY;
 
-    // Вектор направления (0, -1) для P0 и (0, 1) для P1
-    const dirY = owner === 0 ? -1 : 1;
+    // Вектор направления (1, 0) для P0 (стреляет вправо) и (-1, 0) для P1 (стреляет влево)
+    const dirX = owner === 0 ? 1 : -1;
 
-    // Угол между вектором на цель и направлением "вперед"
-    const angleRad = Math.atan2(Math.abs(dx), dy * dirY);
+    const angleRad = Math.atan2(Math.abs(dy), dx * dirX);
     const angleDeg = (angleRad * 180) / Math.PI;
 
     return angleDeg <= coneHalfAngleDeg;

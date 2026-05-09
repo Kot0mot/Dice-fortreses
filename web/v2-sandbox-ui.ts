@@ -10,6 +10,7 @@ import type { RolledDieResult } from "../src/v2/customDie.js";
 import { performCollapse } from "../src/v2/physics.js";
 import { fireWeapon, isWithinFiringCone } from "../src/v2/combat.js";
 import { BUILDING_CATALOG } from "../src/v2/catalog.js";
+import { io, Socket } from "socket.io-client";
 
 const CELL_SIZE = 20;
 
@@ -26,10 +27,22 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     let heldIndices = new Set<number>();
     let currentTab = "dice";
     let activeWeaponId: string | null = null;
-    const weaponGroups: Map<string, string[]> = new Map(); // "1" -> [weaponId, ...]
+
+    let socket: Socket | null = null;
+    let roomCode: string | null = null;
+    let localPlayerIndex: 0 | 1 | null = null;
 
     const shell = document.createElement("div");
     shell.className = "v2-sandbox-shell";
+
+    const onlinePanel = document.createElement("div");
+    onlinePanel.className = "panel";
+    onlinePanel.innerHTML = `
+        <input id="room-code-input" placeholder="Код комнаты" />
+        <button id="btn-create-room">Создать</button>
+        <button id="btn-join-room">Присоединиться</button>
+        <div id="room-status" class="muted"></div>
+    `;
 
     const canvas = document.createElement("canvas");
     canvas.width = V2_GRID_WIDTH * CELL_SIZE;
@@ -51,7 +64,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     bottomPanel.className = "v2-bottom-panel panel";
     bottomPanel.innerHTML = `
         <div class="v2-tabs">
-            <button class="v2-tab active" data-tab="dice">Кубики</button>
+            <button class="v2-tab" data-tab="dice">Кубики</button>
             <button class="v2-tab" data-tab="build">Стройка</button>
             <button class="v2-tab" data-tab="weapons">Оружие</button>
             <button class="v2-tab" data-tab="tech">Технологии</button>
@@ -64,39 +77,94 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             <span id="rerolls-count"></span>
         </div>
         <div id="tab-content-build" class="v2-toolbar hidden">
-            <button id="btn-wood" title="Wood">🪵</button>
-            <button id="btn-metal" title="Metal">⛓️</button>
-            <button id="btn-armor" title="Armor">🛡️</button>
+            <button id="btn-wood">🪵 Дерево</button>
+            <button id="btn-metal">⛓️ Металл</button>
+            <button id="btn-armor">🛡️ Броня</button>
             <button id="btn-finish-build">Завершить</button>
         </div>
         <div id="tab-content-weapons" class="v2-toolbar hidden">
-            <button data-b="machine_gun">Пулемет</button>
-            <button data-b="cannon">Пушка</button>
+            <button data-b="machine_gun">🔫 Пулемет</button>
+            <button data-b="cannon">💣 Пушка</button>
         </div>
         <div id="tab-content-tech" class="v2-toolbar hidden">
-            <button data-b="repair_station">Ремонт</button>
-            <button data-b="tech_station">Тех-станция</button>
+            <button data-b="repair_station">🔧 Ремонт</button>
+            <button data-b="tech_station">🔬 Тех-станция</button>
         </div>
         <div id="tab-content-storage" class="v2-toolbar hidden">
-            <button data-b="storage_depot">Склад</button>
+            <button data-b="storage_depot">📦 Склад</button>
         </div>
         <div id="tab-content-combat" class="v2-toolbar hidden">
             <div id="weapon-list"></div>
-            <span class="muted">Нажми Shift+Клик для группы. Клавиши 1-9 для выбора.</span>
             <button id="btn-next-turn">Конец хода</button>
         </div>
     `;
 
-    shell.append(info, dicePanel, canvas, bottomPanel, btnBack);
+    shell.append(onlinePanel, info, dicePanel, canvas, bottomPanel, btnBack);
     root.replaceChildren(shell);
 
+    // Online Logic
+    function initSocket() {
+        if (socket) return;
+        socket = io("http://localhost:3000");
+        socket.on("room-created", (code) => {
+            roomCode = code;
+            localPlayerIndex = 0;
+            document.getElementById("room-status")!.textContent = `Комната ${code} создана. Ждем игрока 2...`;
+        });
+        socket.on("room-joined", ({ code, playerIndex }) => {
+            roomCode = code;
+            localPlayerIndex = playerIndex;
+            document.getElementById("room-status")!.textContent = `Присоединились к ${code}. Вы — игрок ${playerIndex}.`;
+        });
+        socket.on("state-updated", (newState) => {
+            // Превращаем Map из Plain Objects обратно в Map
+            state = {
+                ...newState,
+                nodes: new Map(Object.entries(newState.nodes)),
+                beams: new Map(Object.entries(newState.beams)),
+                buildings: new Map(Object.entries(newState.buildings))
+            };
+            draw();
+        });
+    }
+
+    function syncState() {
+        if (socket && roomCode) {
+            const syncData = {
+                ...state,
+                nodes: Object.fromEntries(state.nodes),
+                beams: Object.fromEntries(state.beams),
+                buildings: Object.fromEntries(state.buildings)
+            };
+            socket.emit("sync-state", { code: roomCode, state: syncData });
+        }
+    }
+
+    shell.querySelector("#btn-create-room")?.addEventListener("click", () => {
+        initSocket();
+        const code = (document.getElementById("room-code-input") as HTMLInputElement).value;
+        socket?.emit("create-room", code || "1234");
+    }, { signal });
+
+    shell.querySelector("#btn-join-room")?.addEventListener("click", () => {
+        initSocket();
+        const code = (document.getElementById("room-code-input") as HTMLInputElement).value;
+        socket?.emit("join-room", code || "1234");
+    }, { signal });
+
+    function isLocalTurn() {
+        if (localPlayerIndex === null) return true; // Local play
+        return state.currentPlayer === localPlayerIndex;
+    }
+
+    // Phase & UI updates
     function updateTabs(activeTab: string) {
         currentTab = activeTab;
         shell.querySelectorAll(".v2-tab").forEach(t => t.classList.toggle("active", (t as HTMLElement).dataset.tab === activeTab));
         shell.querySelectorAll(".v2-toolbar").forEach(t => t.classList.add("hidden"));
         shell.querySelector(`#tab-content-${activeTab}`)?.classList.remove("hidden");
 
-        if (activeTab === "dice" && rolledDice.length === 0) {
+        if (activeTab === "dice" && rolledDice.length === 0 && isLocalTurn()) {
             const { results, nextState } = rollInitialDice(state, rng);
             rolledDice = results;
             state = nextState;
@@ -109,6 +177,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     shell.querySelectorAll(".v2-tab").forEach(t => t.addEventListener("click", () => updateTabs((t as HTMLElement).dataset.tab!), { signal }));
 
     shell.querySelector("#btn-roll")?.addEventListener("click", () => {
+        if (!isLocalTurn()) return;
         if (state.rerollsLeft > 0) {
             const { results } = rollInitialDice(state, rng);
             rolledDice = rolledDice.map((old, idx) => heldIndices.has(idx) ? old : results[idx]!);
@@ -118,23 +187,29 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     }, { signal });
 
     shell.querySelector("#btn-apply-dice")?.addEventListener("click", () => {
+        if (!isLocalTurn()) return;
         state = applyDiceResults(state, rolledDice);
         rolledDice = []; heldIndices.clear();
         state = { ...state, turnPhase: "build" };
         updateTabs("build");
+        syncState();
     }, { signal });
 
     shell.querySelector("#btn-finish-build")?.addEventListener("click", () => {
+        if (!isLocalTurn()) return;
         const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams) };
         performCollapse(physState);
         state = { ...state, nodes: physState.nodes, beams: physState.beams, turnPhase: "combat" };
         updateTabs("combat");
+        syncState();
     }, { signal });
 
     shell.querySelector("#btn-next-turn")?.addEventListener("click", () => {
+        if (!isLocalTurn()) return;
         state = { ...state, currentPlayer: state.currentPlayer === 0 ? 1 : 0, turnPhase: "dice", rerollsLeft: 2 };
         activeWeaponId = null;
         updateTabs("dice");
+        syncState();
     }, { signal });
 
     shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(btn => btn.addEventListener("click", () => {
@@ -150,10 +225,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             if (b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon") {
                 const btn = document.createElement("button");
                 btn.textContent = BUILDING_CATALOG[b.defId].name;
-                btn.onclick = (e) => {
-                    if (e.shiftKey) {
-                        // Группировка: для простоты просто выделяем для огня несколько
-                    }
+                btn.onclick = () => {
                     activeWeaponId = b.id;
                     renderWeaponList();
                 };
@@ -170,6 +242,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             dieEl.className = `v2-die ${heldIndices.has(idx) ? "held" : ""}`;
             dieEl.textContent = `${d.yield.resourceId || d.yield.effectId}: ${d.yield.amount || ""}`;
             dieEl.onclick = () => {
+                if (!isLocalTurn()) return;
                 if (heldIndices.has(idx)) heldIndices.delete(idx);
                 else heldIndices.add(idx);
                 renderDice();
@@ -191,6 +264,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     }
 
     canvas.addEventListener("click", (evt) => {
+        if (!isLocalTurn()) return;
         const pos = getMousePos(evt);
         if (currentTab === "build") {
             const clickedNode = Array.from(state.nodes.values()).find(n => n.x === pos.x && n.y === pos.y);
@@ -226,18 +300,6 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         draw();
     }, { signal });
 
-    window.addEventListener("keydown", (e) => {
-        if (currentTab === "combat" && e.key >= "1" && e.key <= "9") {
-            const weapons = Array.from(state.buildings.values()).filter(b => b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon");
-            const idx = parseInt(e.key) - 1;
-            if (weapons[idx]) {
-                activeWeaponId = weapons[idx]!.id;
-                renderWeaponList();
-                draw();
-            }
-        }
-    }, { signal });
-
     canvas.addEventListener("mousemove", (evt) => {
         if (currentTab === "combat" && activeWeaponId) {
             draw();
@@ -261,28 +323,38 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = "#333"; ctx.lineWidth = 0.5;
+        ctx.strokeStyle = "#1a2030"; ctx.lineWidth = 1;
         for (let x = 0; x <= V2_GRID_WIDTH; x++) { ctx.beginPath(); ctx.moveTo(x * CELL_SIZE, 0); ctx.lineTo(x * CELL_SIZE, canvas.height); ctx.stroke(); }
         for (let y = 0; y <= V2_GRID_HEIGHT; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL_SIZE); ctx.lineTo(canvas.width, y * CELL_SIZE); ctx.stroke(); }
 
         for (const beam of state.beams.values()) {
             const nodeA = state.nodes.get(beam.nodeAId)!;
             const nodeB = state.nodes.get(beam.nodeBId)!;
-            ctx.strokeStyle = beam.owner === 0 ? "#4a9" : "#a49";
-            ctx.lineWidth = beam.materialId === "wood" ? 2 : 4;
+            if (beam.materialId === "wood") ctx.strokeStyle = "#8b4513";
+            else if (beam.materialId === "metal") ctx.strokeStyle = "#4682b4";
+            else ctx.strokeStyle = "#2f4f4f";
+            ctx.lineWidth = beam.materialId === "wood" ? 3 : 5;
             ctx.beginPath(); ctx.moveTo(nodeA.x * CELL_SIZE, nodeA.y * CELL_SIZE); ctx.lineTo(nodeB.x * CELL_SIZE, nodeB.y * CELL_SIZE); ctx.stroke();
+            ctx.strokeStyle = beam.owner === 0 ? "rgba(0, 255, 0, 0.3)" : "rgba(255, 0, 0, 0.3)";
+            ctx.lineWidth = 1; ctx.stroke();
         }
 
         for (const node of state.nodes.values()) {
-            ctx.fillStyle = node.id === selectedNodeId ? "#fff" : (node.isGround ? "#888" : (node.owner === 0 ? "#4a9" : "#a49"));
+            ctx.fillStyle = node.id === selectedNodeId ? "#fff" : (node.isGround ? "#555" : (node.owner === 0 ? "#0f0" : "#f00"));
             ctx.beginPath(); ctx.arc(node.x * CELL_SIZE, node.y * CELL_SIZE, 4, 0, Math.PI * 2); ctx.fill();
         }
 
         for (const b of state.buildings.values()) {
             const node = state.nodes.get(b.nodeIds[0]!)!;
-            ctx.fillStyle = b.owner === 0 ? "#2f2" : "#f22";
-            if (activeWeaponId === b.id) ctx.strokeStyle = "#fff", ctx.lineWidth = 2, ctx.strokeRect(node.x * CELL_SIZE - 12, node.y * CELL_SIZE - 12, 24, 24);
+            const def = BUILDING_CATALOG[b.defId];
+            ctx.fillStyle = b.owner === 0 ? "rgba(0, 255, 0, 0.7)" : "rgba(255, 0, 0, 0.7)";
+            if (activeWeaponId === b.id) {
+                ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+                ctx.strokeRect(node.x * CELL_SIZE - 12, node.y * CELL_SIZE - 12, 24, 24);
+            }
             ctx.fillRect(node.x * CELL_SIZE - 10, node.y * CELL_SIZE - 10, 20, 20);
+            ctx.fillStyle = "#fff"; ctx.font = "10px monospace";
+            ctx.fillText(def.name[0], node.x * CELL_SIZE - 3, node.y * CELL_SIZE + 4);
             if (!b.isOperational) {
                 ctx.strokeStyle = "#f00"; ctx.lineWidth = 2;
                 ctx.beginPath(); ctx.moveTo(node.x*CELL_SIZE-10, node.y*CELL_SIZE-10); ctx.lineTo(node.x*CELL_SIZE+10, node.y*CELL_SIZE+10); ctx.stroke();
@@ -291,13 +363,14 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
         const eco = state.economy[state.currentPlayer].resources;
         const caps = state.economy[state.currentPlayer].caps;
-        info.innerHTML = `Ход: Игрок ${state.currentPlayer} | Фаза: ${state.turnPhase} | Steel: ${eco.steel ?? 0}/${caps.steel} | Ammo: ${eco.ammo ?? 0}/${caps.ammo}`;
+        info.innerHTML = `[SYS] PLAYER_${state.currentPlayer} | PHASE: ${state.turnPhase.toUpperCase()} | STEEL: ${eco.steel ?? 0}/${caps.steel} | AMMO: ${eco.ammo ?? 0}/${caps.ammo}`;
     }
 
     updateTabs("dice");
     draw();
 
     return () => {
+        socket?.disconnect();
         ac.abort();
         root.replaceChildren();
     };

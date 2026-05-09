@@ -22,13 +22,24 @@
     "lint": "tsc --noEmit",
     "check:quick": "npm run lint && npm test",
     "check": "npm run lint && npm test && npm run build && npm run web:build && npm run demo",
-    "release:bundle": "npm run build && npm run web:build && node scripts/releaseBundle.mjs"
+    "release:bundle": "npm run build && npm run web:build && node scripts/releaseBundle.mjs",
+    "server": "tsc && node dist/server.js"
   },
-  "keywords": ["game", "typescript"],
+  "keywords": [
+    "game",
+    "typescript"
+  ],
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^20.14.9",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.6",
+    "@types/socket.io-client": "^1.4.36",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   }
 }

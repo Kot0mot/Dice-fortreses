@@ -16,7 +16,7 @@ export interface V2MatchState {
     readonly rerollsLeft: number;
 }
 
-/** Инициализация: создаем землю и ядра */
+/** Инициализация: создаем землю и ядра (Слева и Справа) */
 export function createInitialV2Match(): V2MatchState {
     const w = V2_GRID_WIDTH;
     const h = V2_GRID_HEIGHT;
@@ -25,15 +25,19 @@ export function createInitialV2Match(): V2MatchState {
     const beams = new Map<string, V2Beam>();
     const buildings = new Map<string, BuildingInstance>();
 
-    for (let x = 0; x < w; x++) {
+    // Создаем узлы земли: P0 слева, P1 справа. Все на y = h - 1.
+    const groundWidth = Math.floor(w / 4);
+    for (let x = 0; x < groundWidth; x++) {
         const id0 = `ground-0-${x}`;
         nodes.set(id0, { id: id0, x, y: h - 1, owner: 0, isGround: true });
-        const id1 = `ground-1-${x}`;
-        nodes.set(id1, { id: id1, x, y: 0, owner: 1, isGround: true });
+
+        const x1 = w - 1 - x;
+        const id1 = `ground-1-${x1}`;
+        nodes.set(id1, { id: id1, x: x1, y: h - 1, owner: 1, isGround: true });
     }
 
-    const cx = Math.floor(w / 2);
-    const nodeP0 = nodes.get(`ground-0-${cx}`)!;
+    // Стартовые ядра: P0 на x=0, P1 на x=w-1
+    const nodeP0 = nodes.get(`ground-0-0`)!;
     const b0: BuildingInstance = {
         id: "core-0",
         defId: "core_generator",
@@ -43,7 +47,7 @@ export function createInitialV2Match(): V2MatchState {
         isOperational: true,
     };
 
-    const nodeP1 = nodes.get(`ground-1-${cx}`)!;
+    const nodeP1 = nodes.get(`ground-1-${w - 1}`)!;
     const b1: BuildingInstance = {
         id: "core-1",
         defId: "core_generator",
@@ -84,6 +88,10 @@ const NODE_COST = 1;
 export function tryPlaceNode(state: V2MatchState, x: number, y: number, owner: OwnerId): V2MatchState {
     const id = `node-${owner}-${x}-${y}`;
     if (state.nodes.has(id)) return state;
+
+    // Простая проверка: нельзя строить за пределами своей половины
+    if (owner === 0 && x >= state.width / 2) return state;
+    if (owner === 1 && x < state.width / 2) return state;
 
     const eco = state.economy[owner];
     if ((eco.resources.steel ?? 0) < NODE_COST) return state;
@@ -131,7 +139,6 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     const def = BUILDING_CATALOG[defId];
     if (!def) return state;
 
-    // Проверка технологий
     if (def.techRequired) {
         const hasTech = Array.from(state.buildings.values()).some(
             b => b.owner === owner && b.defId === def.techRequired && b.isOperational
