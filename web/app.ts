@@ -360,6 +360,7 @@ function syncScreenVisibility(): void {
     gameScreenEl.classList.toggle("hidden", appState.screen !== "game");
 
     if (appState.screen === "v2sandbox") {
+        hideEndgameOverlay();
         v2SandboxUnmount?.();
         const chosenSeed = appState.seed ?? Math.floor(Date.now());
         v2SandboxUnmount = mountV2Sandbox(v2SandboxRootEl, {

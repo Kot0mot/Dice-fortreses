@@ -2,7 +2,7 @@
  * Расширенный UI для v2 sandbox (узлы, балки, фазы)
  */
 import { DiceFortsRng } from "../src/random.js";
-import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, tryUpgradeBuilding, tryRepairBuilding, tryDeleteBuilding, tryDeleteBeam, type V2MatchState } from "../src/v2/matchState.js";
+import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, tryUpgradeBuilding, tryRepairBuilding, tryRepairAll, tryDeleteBuilding, tryDeleteBeam, type V2MatchState } from "../src/v2/matchState.js";
 import { V2_GRID_WIDTH, V2_GRID_HEIGHT } from "../src/v2/constants.js";
 import { BEAM_MATERIALS, type BeamMaterialId } from "../src/v2/mapTypes.js";
 import { rollInitialDice, applyDiceResults } from "../src/v2/diceSystems.js";
@@ -13,6 +13,7 @@ import { runAiTurn, type AiDifficulty } from "../src/v2/ai.js";
 import { V2_CAMPAIGN_STAGES, createInitialCampaign, applyCampaignPerks, getRandomPerkOptions, type CampaignState, CAMPAIGN_PERKS } from "../src/v2/campaign.js";
 import { BUILDING_CATALOG } from "../src/v2/catalog.js";
 import { io, Socket } from "socket.io-client";
+import { playUiClick, playPlaceSound, playFireSound, playExplosionSound } from "./audio.js";
 
 const CELL_SIZE = 20;
 
@@ -46,6 +47,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     let projectiles: AnimatedProjectile[] = [];
     let particles: Particle[] = [];
     let screenShake = 0;
+    let mousePos = { x: 0, y: 0, rawX: 0, rawY: 0 };
 
     let socket: Socket | null = null;
     let roomCode: string | null = null;
@@ -116,6 +118,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             <button id="btn-metal">⛓️ Металл</button>
             <button id="btn-armor">🛡️ Броня</button>
             <button id="btn-shield">💠 Щит</button>
+            <button id="btn-repair-all">🔧 Чинить всё</button>
             <button id="btn-finish-build">Завершить</button>
         </div>
         <div id="tab-content-weapons" class="v2-toolbar hidden">
@@ -141,10 +144,13 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         </div>
     `;
 
-    shell.append(onlinePanel, info, dicePanel, canvas, bottomPanel, btnBack);
+    const tooltip = document.createElement("div");
+    tooltip.className = "v2-tooltip hidden";
+    shell.append(onlinePanel, info, dicePanel, canvas, bottomPanel, btnBack, tooltip);
     root.replaceChildren(shell);
 
     function createExplosion(x: number, y: number, type: "impact" | "collapse" | "upgrade" = "impact") {
+        if (type !== "upgrade") playExplosionSound();
         const count = type === "impact" ? 30 : 15;
         const color = type === "upgrade" ? "#0f0" : (type === "impact" ? "#ff0" : "#8b4513");
         for (let i = 0; i < count; i++) {
@@ -278,7 +284,10 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         draw();
     }
 
-    shell.querySelectorAll(".v2-tab").forEach(t => t.addEventListener("click", () => updateTabs((t as HTMLElement).dataset.tab!), { signal }));
+    shell.querySelectorAll(".v2-tab").forEach(t => t.addEventListener("click", () => {
+        playUiClick();
+        updateTabs((t as HTMLElement).dataset.tab!);
+    }, { signal }));
 
     shell.querySelector("#btn-roll")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
@@ -292,10 +301,18 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     shell.querySelector("#btn-apply-dice")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
+        playUiClick();
         state = applyDiceResults(state, rolledDice);
         rolledDice = []; heldIndices.clear();
         state = { ...state, turnPhase: "build" };
         updateTabs("build");
+        syncState();
+    }, { signal });
+
+    shell.querySelector("#btn-repair-all")?.addEventListener("click", () => {
+        if (!isLocalTurn()) return;
+        playUiClick();
+        state = tryRepairAll(state, state.currentPlayer);
         syncState();
     }, { signal });
 
@@ -334,11 +351,30 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         }
     }, { signal });
 
-    shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(btn => btn.addEventListener("click", () => {
-        selectedBuildingId = (btn as HTMLElement).dataset.b!;
-        shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-    }, { signal }));
+    shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(btn => {
+        const bId = (btn as HTMLElement).dataset.b!;
+        btn.addEventListener("click", () => {
+            selectedBuildingId = bId;
+            shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+        }, { signal });
+
+        btn.addEventListener("mouseenter", (e) => {
+            const def = BUILDING_CATALOG[bId];
+            if (!def) return;
+            tooltip.innerHTML = `
+                <strong>${def.name}</strong><br>
+                Cost: ${def.cost.steel} Steel<br>
+                HP: ${def.maxHp}<br>
+                ${def.techRequired ? `<small>Requires: ${def.techRequired}</small>` : ""}
+            `;
+            tooltip.classList.remove("hidden");
+            const rect = btn.getBoundingClientRect();
+            tooltip.style.left = `${rect.left}px`;
+            tooltip.style.top = `${rect.top - 80}px`;
+        });
+        btn.addEventListener("mouseleave", () => tooltip.classList.add("hidden"));
+    });
 
     function renderWeaponList() {
         const list = shell.querySelector("#weapon-list")!;
@@ -419,6 +455,8 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         if (!isLocalTurn()) return;
         const pos = getMousePos(evt);
         if (currentTab === "build") {
+            const oldBeams = state.beams.size;
+            const oldNodes = state.nodes.size;
             const clickedNode = Array.from(state.nodes.values()).find(n => n.x === pos.x && n.y === pos.y);
             if (clickedNode) {
                 if (selectedNodeId && selectedNodeId !== clickedNode.id) {
@@ -435,16 +473,21 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
                     selectedNodeId = null;
                 }
             }
+            if (state.beams.size > oldBeams || state.nodes.size > oldNodes) playPlaceSound();
         } else if (["weapons", "tech", "storage"].includes(currentTab) && selectedBuildingId) {
             const clickedNode = Array.from(state.nodes.values()).find(n => n.x === pos.x && n.y === pos.y);
             if (clickedNode) {
+                const oldSize = state.buildings.size;
                 state = tryPlaceBuilding(state, selectedBuildingId, [clickedNode.id], state.currentPlayer, campaign?.unlockedPerks || []);
+                if (state.buildings.size > oldSize) playPlaceSound();
             }
         } else if (currentTab === "combat" && activeWeaponIds.length > 0) {
             for (const wid of activeWeaponIds) {
+                const weapon = state.buildings.get(wid);
                 const { nextState, result } = fireWeapon(state, wid, pos.x, pos.y);
                 state = nextState;
                 if (result) {
+                    playFireSound(weapon?.defId === 'laser_turret' ? 'energy' : 'kinetic');
                     projectiles.push({ result, progress: 0 });
                 }
             }
@@ -453,22 +496,8 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     }, { signal });
 
     canvas.addEventListener("mousemove", (evt) => {
-        if (currentTab === "combat" && activeWeaponIds.length > 0) {
-            const pos = getMousePos(evt);
-            draw();
-            ctx.setLineDash([5, 5]);
-            for (const wid of activeWeaponIds) {
-                const weapon = state.buildings.get(wid);
-                if (!weapon) continue;
-                const node = state.nodes.get(weapon.nodeIds[0]!)!;
-                ctx.strokeStyle = isWithinFiringCone(node.x, node.y, pos.x, pos.y, state.currentPlayer) ? "#0f0" : "#f00";
-                ctx.beginPath();
-                ctx.moveTo(node.x * CELL_SIZE, node.y * CELL_SIZE);
-                ctx.lineTo(pos.rawX, pos.rawY);
-                ctx.stroke();
-            }
-            ctx.setLineDash([]);
-        }
+        mousePos = getMousePos(evt);
+        draw();
     }, { signal });
 
     function animate() {
@@ -612,6 +641,44 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
             const size = p.color === "#555" ? 6 : 3; ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
         }
+
+        // --- GHOST PREVIEWS ---
+        if (isLocalTurn()) {
+            ctx.globalAlpha = 0.4;
+            if (currentTab === "build") {
+                if (selectedNodeId) {
+                    const nodeA = state.nodes.get(selectedNodeId)!;
+                    ctx.strokeStyle = "#fff"; ctx.setLineDash([5, 5]);
+                    ctx.beginPath(); ctx.moveTo(nodeA.x * CELL_SIZE, nodeA.y * CELL_SIZE); ctx.lineTo(mousePos.x * CELL_SIZE, mousePos.y * CELL_SIZE); ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+                ctx.fillStyle = "#fff";
+                ctx.beginPath(); ctx.arc(mousePos.x * CELL_SIZE, mousePos.y * CELL_SIZE, 4, 0, Math.PI * 2); ctx.fill();
+            } else if (["weapons", "tech", "storage"].includes(currentTab) && selectedBuildingId) {
+                const snappedNode = Array.from(state.nodes.values()).find(n => n.x === mousePos.x && n.y === mousePos.y);
+                if (snappedNode) {
+                    ctx.fillStyle = "#0f0";
+                    ctx.fillRect(snappedNode.x * CELL_SIZE - 10, snappedNode.y * CELL_SIZE - 10, 20, 20);
+                } else {
+                    ctx.strokeStyle = "#fff";
+                    ctx.strokeRect(mousePos.x * CELL_SIZE - 10, mousePos.y * CELL_SIZE - 10, 20, 20);
+                }
+            } else if (currentTab === "combat" && activeWeaponIds.length > 0) {
+                ctx.setLineDash([5, 5]);
+                for (const wid of activeWeaponIds) {
+                    const weapon = state.buildings.get(wid);
+                    if (!weapon) continue;
+                    const node = state.nodes.get(weapon.nodeIds[0]!)!;
+                    ctx.strokeStyle = isWithinFiringCone(node.x, node.y, mousePos.x, mousePos.y, state.currentPlayer) ? "#0f0" : "#f00";
+                    ctx.beginPath();
+                    ctx.moveTo(node.x * CELL_SIZE, node.y * CELL_SIZE);
+                    ctx.lineTo(mousePos.rawX, mousePos.rawY);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+        }
+
         ctx.globalAlpha = 1; ctx.restore();
 
         const eco = state.economy[state.currentPlayer].resources;

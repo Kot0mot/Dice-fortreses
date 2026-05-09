@@ -142,6 +142,9 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     const def = BUILDING_CATALOG[defId];
     if (!def) return state;
 
+    // Must have at least one valid node
+    if (!nodeIds.every(nid => state.nodes.has(nid))) return state;
+
     if (def.techRequired) {
         const hasTech = Array.from(state.buildings.values()).some(
             b => b.owner === owner && b.defId === def.techRequired && b.isOperational
@@ -159,7 +162,8 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     }
 
     const buildings = new Map(state.buildings);
-    const id = `b-${owner}-${Date.now()}`;
+    // Use a more unique ID to avoid collisions in fast-running tests
+    const id = `b-${owner}-${defId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     buildings.set(id, {
         id,
         defId,
@@ -213,6 +217,27 @@ export function tryDeleteBeam(state: V2MatchState, beamId: string): V2MatchState
     const beams = new Map(state.beams);
     beams.delete(beamId);
     return { ...state, beams };
+}
+
+export function tryRepairAll(state: V2MatchState, owner: OwnerId): V2MatchState {
+    const eco = state.economy[owner];
+    let steel = eco.resources.steel ?? 0;
+    const nextBuildings = new Map(state.buildings);
+    let changed = false;
+
+    for (const [bid, b] of state.buildings.entries()) {
+        if (b.owner === owner && b.hp < BUILDING_CATALOG[b.defId].hp && steel >= 2) {
+            nextBuildings.set(bid, { ...b, hp: BUILDING_CATALOG[b.defId].hp });
+            steel -= 2;
+            changed = true;
+        }
+    }
+
+    if (!changed) return state;
+    const nextEconomy = [...state.economy];
+    nextEconomy[owner] = { ...eco, resources: { ...eco.resources, steel } };
+
+    return { ...state, buildings: nextBuildings, economy: nextEconomy as [any, any] };
 }
 
 export function tryUpgradeBuilding(state: V2MatchState, buildingId: string): V2MatchState {
