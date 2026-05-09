@@ -10,6 +10,7 @@ import type { RolledDieResult } from "../src/v2/customDie.js";
 import { performCollapse, calculateLoads } from "../src/v2/physics.js";
 import { fireWeapon, isWithinFiringCone, type FiringResult } from "../src/v2/combat.js";
 import { runAiTurn, type AiDifficulty } from "../src/v2/ai.js";
+import { V2_CAMPAIGN_STAGES, createInitialCampaign, applyCampaignPerks, getRandomPerkOptions, type CampaignState, CAMPAIGN_PERKS } from "../src/v2/campaign.js";
 import { BUILDING_CATALOG } from "../src/v2/catalog.js";
 import { io, Socket } from "socket.io-client";
 
@@ -50,6 +51,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     let roomCode: string | null = null;
     let localPlayerIndex: 0 | 1 | null = null;
     let vsAiDifficulty: AiDifficulty | null = null;
+    let campaign: CampaignState | null = null;
     let animId: number | null = null;
 
     const shell = document.createElement("div");
@@ -71,6 +73,8 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
                 <option value="hard">Hard</option>
             </select>
             <button id="btn-start-ai">Start AI Match</button>
+            <div class="divider"></div>
+            <button id="btn-start-campaign">Campaign Mode</button>
         </div>
         <div id="room-status" class="muted"></div>
     `;
@@ -403,7 +407,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         } else if (["weapons", "tech", "storage"].includes(currentTab) && selectedBuildingId) {
             const clickedNode = Array.from(state.nodes.values()).find(n => n.x === pos.x && n.y === pos.y);
             if (clickedNode) {
-                state = tryPlaceBuilding(state, selectedBuildingId, [clickedNode.id], state.currentPlayer);
+                state = tryPlaceBuilding(state, selectedBuildingId, [clickedNode.id], state.currentPlayer, campaign?.unlockedPerks || []);
             }
         } else if (currentTab === "combat" && activeWeaponId) {
             const { nextState, result } = fireWeapon(state, activeWeaponId, pos.x, pos.y);
@@ -444,6 +448,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
                         const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) };
                         performCollapse(physState);
                         state = { ...state, nodes: physState.nodes, beams: physState.beams, buildings: physState.buildings! };
+                        checkVictory();
                     }
                     projectiles.splice(i, 1);
                 }
@@ -468,6 +473,40 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         animId = requestAnimationFrame(animate);
     }
     animId = requestAnimationFrame(animate);
+
+    function checkVictory() {
+        const p1Core = Array.from(state.buildings.values()).find(b => b.owner === 1 && b.defId === "core_generator");
+        if (!p1Core && campaign) {
+            showPerkSelection();
+        }
+    }
+
+    function showPerkSelection() {
+        const perks = getRandomPerkOptions();
+        const overlay = document.createElement("div");
+        overlay.className = "overlay";
+        overlay.innerHTML = `
+            <div class="overlay-card panel">
+                <h2>Победа! Выберите улучшение:</h2>
+                <div id="perk-list" style="display:flex; gap:10px; margin-bottom: 20px;"></div>
+            </div>
+        `;
+        const list = overlay.querySelector("#perk-list")!;
+        perks.forEach(p => {
+            const btn = document.createElement("button");
+            btn.innerHTML = `<strong>${p.name}</strong><br><small>${p.description}</small>`;
+            btn.style.textAlign = "center";
+            btn.onclick = () => {
+                campaign!.unlockedPerks.push(p.id);
+                campaign!.currentStageIndex++;
+                localStorage.setItem("v2_campaign_state", JSON.stringify(campaign));
+                overlay.remove();
+                startCampaignStage();
+            };
+            list.appendChild(btn);
+        });
+        shell.appendChild(overlay);
+    }
 
     function draw() {
         ctx.save();
@@ -561,8 +600,36 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         if (diff === "none") return;
         vsAiDifficulty = diff as AiDifficulty;
         localPlayerIndex = 0;
+        campaign = null;
         document.getElementById("room-status")!.textContent = `Playing vs AI (${diff})`;
     }, { signal });
+
+    shell.querySelector("#btn-start-campaign")?.addEventListener("click", () => {
+        const saved = localStorage.getItem("v2_campaign_state");
+        if (saved) {
+            campaign = JSON.parse(saved);
+        } else {
+            campaign = createInitialCampaign();
+        }
+        startCampaignStage();
+    }, { signal });
+
+    function startCampaignStage() {
+        if (!campaign) return;
+        const stage = V2_CAMPAIGN_STAGES[campaign.currentStageIndex];
+        if (!stage) {
+            alert("Кампания завершена! Вы — великий инженер.");
+            campaign = null;
+            return;
+        }
+
+        state = createInitialV2Match();
+        state = applyCampaignPerks(state, campaign.unlockedPerks);
+        vsAiDifficulty = stage.aiDifficulty;
+        localPlayerIndex = 0;
+        document.getElementById("room-status")!.textContent = `STAGE ${campaign.currentStageIndex + 1}: ${stage.title}`;
+        updateTabs("dice");
+    }
     shell.querySelector("#btn-wood")?.addEventListener("click", () => selectedMaterial = "wood", { signal });
     shell.querySelector("#btn-metal")?.addEventListener("click", () => selectedMaterial = "metal", { signal });
     shell.querySelector("#btn-armor")?.addEventListener("click", () => selectedMaterial = "armor_plating", { signal });

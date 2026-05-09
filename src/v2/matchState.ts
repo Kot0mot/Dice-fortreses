@@ -138,7 +138,7 @@ export function tryPlaceBeam(state: V2MatchState, nodeAId: string, nodeBId: stri
     return { ...state, beams, economy: nextEconomies };
 }
 
-export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: string[], owner: OwnerId): V2MatchState {
+export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: string[], owner: OwnerId, campaignPerks: string[] = []): V2MatchState {
     const def = BUILDING_CATALOG[defId];
     if (!def) return state;
 
@@ -150,8 +150,12 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     }
 
     const eco = state.economy[owner];
+    const isEarlyTechActive = owner === 0 && campaignPerks.includes("perk_early_tech") && defId === "tech_station";
+
     for (const [rid, amount] of Object.entries(def.cost)) {
-        if ((eco.resources[rid as ResourceId] ?? 0) < (amount as number)) return state;
+        let finalCost = amount as number;
+        if (isEarlyTechActive) finalCost = Math.floor(finalCost * 0.5);
+        if ((eco.resources[rid as ResourceId] ?? 0) < finalCost) return state;
     }
 
     const buildings = new Map(state.buildings);
@@ -168,7 +172,9 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
 
     const nextRes = { ...eco.resources };
     for (const [rid, amount] of Object.entries(def.cost)) {
-        nextRes[rid as ResourceId] = (nextRes[rid as ResourceId] ?? 0) - (amount as number);
+        let finalCost = amount as number;
+        if (isEarlyTechActive) finalCost = Math.floor(finalCost * 0.5);
+        nextRes[rid as ResourceId] = (nextRes[rid as ResourceId] ?? 0) - finalCost;
     }
     const nextEco: PlayerEconomy = { ...eco, resources: nextRes };
     const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
