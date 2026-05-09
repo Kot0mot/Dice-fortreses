@@ -196,3 +196,27 @@ body::after {
     background: #00ff00;
     color: #000;
 }
+
+.context-menu {
+    position: fixed;
+    background: #1a2030;
+    border: 1px solid #00ff00;
+    padding: 5px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.context-menu button {
+    padding: 5px 10px;
+    font-size: 11px;
+    border: none;
+    box-shadow: none;
+    text-align: left;
+}
+
+.context-menu button:hover {
+    background: #00ff00;
+    color: #000;
+}

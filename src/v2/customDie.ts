@@ -1,5 +1,11 @@
-import type { Rng } from "../types.js";
-import type { DiceFaceEffect } from "./catalog.js";
+import type { ResourceId } from "./resources.js";
+
+/** Эффект грани куба: либо ресурс, либо эффект. */
+export interface DiceFaceEffect {
+    readonly resourceId?: ResourceId;
+    readonly amount?: number;
+    readonly effectId?: string;
+}
 
 export interface CustomDieDefinition {
     readonly id: string;
@@ -19,6 +25,8 @@ export function assertValidDieDefinition(def: CustomDieDefinition): void {
         throw new Error(`Куб ${def.id}: нужно ровно 6 граней, сейчас ${def.faces.length}`);
     }
 }
+
+import type { Rng } from "../types.js";
 
 export function rollCustomDie(def: CustomDieDefinition, dieInstanceKey: string, rng: Rng): RolledDieResult {
     assertValidDieDefinition(def);

@@ -2,12 +2,12 @@
  * Расширенный UI для v2 sandbox (узлы, балки, фазы)
  */
 import { DiceFortsRng } from "../src/random.js";
-import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, type V2MatchState } from "../src/v2/matchState.js";
+import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, tryUpgradeBuilding, tryRepairBuilding, tryDeleteBuilding, tryDeleteBeam, type V2MatchState } from "../src/v2/matchState.js";
 import { V2_GRID_WIDTH, V2_GRID_HEIGHT } from "../src/v2/constants.js";
 import { BEAM_MATERIALS, type BeamMaterialId } from "../src/v2/mapTypes.js";
 import { rollInitialDice, applyDiceResults } from "../src/v2/diceSystems.js";
 import type { RolledDieResult } from "../src/v2/customDie.js";
-import { performCollapse } from "../src/v2/physics.js";
+import { performCollapse, calculateLoads } from "../src/v2/physics.js";
 import { fireWeapon, isWithinFiringCone, type FiringResult } from "../src/v2/combat.js";
 import { BUILDING_CATALOG } from "../src/v2/catalog.js";
 import { io, Socket } from "socket.io-client";
@@ -24,7 +24,7 @@ interface Particle {
     y: number;
     vx: number;
     vy: number;
-    life: number; // 0 to 1
+    life: number;
     color: string;
 }
 
@@ -120,20 +120,121 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     shell.append(onlinePanel, info, dicePanel, canvas, bottomPanel, btnBack);
     root.replaceChildren(shell);
 
-    function createExplosion(x: number, y: number, type: "impact" | "collapse" = "impact") {
+    function createExplosion(x: number, y: number, type: "impact" | "collapse" | "upgrade" = "impact") {
         const count = type === "impact" ? 30 : 15;
+        const color = type === "upgrade" ? "#0f0" : (type === "impact" ? "#ff0" : "#8b4513");
         for (let i = 0; i < count; i++) {
-            const isSmoke = Math.random() > 0.7;
             particles.push({
                 x, y,
-                vx: (Math.random() - 0.5) * (isSmoke ? 3 : 12),
-                vy: (Math.random() - 0.5) * (isSmoke ? 3 : 12),
+                vx: (Math.random() - 0.5) * (type === "upgrade" ? 5 : 12),
+                vy: (Math.random() - 0.5) * (type === "upgrade" ? 5 : 12),
                 life: 1,
-                color: isSmoke ? "#555" : (type === "impact" ? "#ff0" : "#8b4513")
+                color
             });
         }
-        screenShake = Math.max(screenShake, type === "impact" ? 12 : 5);
+        if (type !== "upgrade") screenShake = Math.max(screenShake, type === "impact" ? 12 : 5);
     }
+
+    // Context Menu Logic
+    canvas.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        if (!isLocalTurn() || currentTab !== "build") return;
+        const pos = getMousePos(e);
+
+        // Check building click
+        const clickedBuilding = Array.from(state.buildings.values()).find(b => {
+            const node = state.nodes.get(b.nodeIds[0]!)!;
+            return Math.abs(node.x - pos.x) < 1.5 && Math.abs(node.y - pos.y) < 1.5;
+        });
+
+        if (clickedBuilding && clickedBuilding.owner === state.currentPlayer) {
+            const menuItems = [
+                { label: `Upgrade (Lv${clickedBuilding.level} -> ${clickedBuilding.level + 1})`, action: () => {
+                    const next = tryUpgradeBuilding(state, clickedBuilding.id);
+                    if (next !== state) {
+                        state = next;
+                        const node = state.nodes.get(clickedBuilding.nodeIds[0]!)!;
+                        createExplosion(node.x * CELL_SIZE, node.y * CELL_SIZE, "upgrade");
+                        syncState();
+                    }
+                }},
+                { label: "Repair (Steel: 2)", action: () => {
+                    state = tryRepairBuilding(state, clickedBuilding.id);
+                    syncState();
+                }},
+                { label: "Delete", action: () => {
+                    state = tryDeleteBuilding(state, clickedBuilding.id);
+                    syncState();
+                }}
+            ];
+            showContextMenu(e.clientX, e.clientY, menuItems);
+            return;
+        }
+
+        // Check beam click (approximate)
+        const clickedBeam = Array.from(state.beams.values()).find(b => {
+            const nA = state.nodes.get(b.nodeAId)!;
+            const nB = state.nodes.get(b.nodeBId)!;
+            const dist = distToSegment({ x: pos.x, y: pos.y }, nA, nB);
+            return dist < 0.5;
+        });
+
+        if (clickedBeam && clickedBeam.owner === state.currentPlayer) {
+            showContextMenu(e.clientX, e.clientY, [
+                { label: "Delete Beam", action: () => {
+                    state = tryDeleteBeam(state, clickedBeam.id);
+                    syncState();
+                }}
+            ]);
+        }
+    });
+
+    function distToSegment(p: { x: number, y: number }, a: { x: number, y: number }, b: { x: number, y: number }) {
+        const l2 = (a.x - b.x)**2 + (a.y - b.y)**2;
+        if (l2 === 0) return Math.sqrt((p.x - a.x)**2 + (p.y - a.y)**2);
+        let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.sqrt((p.x - (a.x + t * (b.x - a.x)))**2 + (p.y - (a.y + t * (b.y - a.y)))**2);
+    }
+
+    function showContextMenu(x: number, y: number, items: {label: string, action: () => void}[]) {
+        const existing = document.querySelector(".context-menu");
+        if (existing) existing.remove();
+
+        const menu = document.createElement("div");
+        menu.className = "context-menu";
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        items.forEach(item => {
+            const btn = document.createElement("button");
+            btn.textContent = item.label;
+            btn.onclick = () => { item.action(); menu.remove(); };
+            menu.appendChild(btn);
+        });
+
+        document.body.appendChild(menu);
+        const close = () => { menu.remove(); document.removeEventListener("click", close); };
+        setTimeout(() => document.addEventListener("click", close), 10);
+    }
+
+    // Online Logic (Simplified for reuse)
+    function initSocket() {
+        if (socket) return;
+        socket = io("http://localhost:3000");
+        socket.on("room-created", (code) => { roomCode = code; localPlayerIndex = 0; document.getElementById("room-status")!.textContent = `Комната ${code} создана. Ждем игрока 2...`; });
+        socket.on("room-joined", ({ code, playerIndex }) => { roomCode = code; localPlayerIndex = playerIndex; document.getElementById("room-status")!.textContent = `Присоединились к ${code}. Вы — игрок ${playerIndex}.`; });
+        socket.on("state-updated", (newState) => {
+            state = {
+                ...newState,
+                nodes: new Map(Object.entries(newState.nodes)),
+                beams: new Map(Object.entries(newState.beams)),
+                buildings: new Map(Object.entries(newState.buildings))
+            };
+        });
+    }
+    function syncState() { if (socket && roomCode) { const syncData = { ...state, nodes: Object.fromEntries(state.nodes), beams: Object.fromEntries(state.beams), buildings: Object.fromEntries(state.buildings) }; socket.emit("sync-state", { code: roomCode, state: syncData }); } }
+    function isLocalTurn() { return localPlayerIndex === null || state.currentPlayer === localPlayerIndex; }
 
     // Phase & UI updates
     function updateTabs(activeTab: string) {
@@ -175,9 +276,17 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     shell.querySelector("#btn-finish-build")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
-        const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams) };
-        performCollapse(physState);
-        state = { ...state, nodes: physState.nodes, beams: physState.beams, turnPhase: "combat" };
+        const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) };
+        const { collapsedBeams } = performCollapse(physState);
+        collapsedBeams.forEach(bid => {
+            const b = state.beams.get(bid);
+            if (b) {
+                const nA = state.nodes.get(b.nodeAId)!;
+                const nB = state.nodes.get(b.nodeBId)!;
+                createExplosion((nA.x + nB.x) / 2 * CELL_SIZE, (nA.y + nB.y) / 2 * CELL_SIZE, "collapse");
+            }
+        });
+        state = { ...state, nodes: physState.nodes, beams: physState.beams, buildings: physState.buildings!, turnPhase: "combat" };
         updateTabs("combat");
         syncState();
     }, { signal });
@@ -202,7 +311,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         for (const b of state.buildings.values()) {
             if (b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon") {
                 const btn = document.createElement("button");
-                btn.textContent = BUILDING_CATALOG[b.defId].name;
+                btn.textContent = `${BUILDING_CATALOG[b.defId].name} (Lv${b.level})`;
                 btn.onclick = () => {
                     activeWeaponId = b.id;
                     renderWeaponList();
@@ -278,10 +387,11 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     canvas.addEventListener("mousemove", (evt) => {
         if (currentTab === "combat" && activeWeaponId) {
-            draw();
             const pos = getMousePos(evt);
             const weapon = state.buildings.get(activeWeaponId)!;
             const node = state.nodes.get(weapon.nodeIds[0]!)!;
+
+            draw();
             ctx.setLineDash([5, 5]);
             ctx.strokeStyle = isWithinFiringCone(node.x, node.y, pos.x, pos.y, state.currentPlayer) ? "#0f0" : "#f00";
             ctx.beginPath();
@@ -301,17 +411,9 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
                     const p = projectiles[i]!;
                     createExplosion(p.result.targetX * CELL_SIZE, p.result.targetY * CELL_SIZE, p.result.hitBuildingId ? "#f00" : "#ff0");
                     if (p.result.hitBuildingId) {
-                        const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams) };
-                        const { collapsedBeams } = performCollapse(physState);
-                        collapsedBeams.forEach(bid => {
-                            const b = state.beams.get(bid);
-                            if (b) {
-                                const nA = state.nodes.get(b.nodeAId)!;
-                                const nB = state.nodes.get(b.nodeBId)!;
-                                createExplosion((nA.x + nB.x) / 2 * CELL_SIZE, (nA.y + nB.y) / 2 * CELL_SIZE, "collapse");
-                            }
-                        });
-                        state = { ...state, nodes: physState.nodes, beams: physState.beams };
+                        const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) };
+                        performCollapse(physState);
+                        state = { ...state, nodes: physState.nodes, beams: physState.beams, buildings: physState.buildings! };
                     }
                     projectiles.splice(i, 1);
                 }
@@ -339,68 +441,60 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     function draw() {
         ctx.save();
-        if (screenShake > 0) {
-            ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
-        }
+        if (screenShake > 0) ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
         ctx.clearRect(-100, -100, canvas.width + 200, canvas.height + 200);
 
-        // Background Grid
         ctx.strokeStyle = "#1a2030"; ctx.lineWidth = 1;
         for (let x = 0; x <= V2_GRID_WIDTH; x++) { ctx.beginPath(); ctx.moveTo(x * CELL_SIZE, 0); ctx.lineTo(x * CELL_SIZE, canvas.height); ctx.stroke(); }
         for (let y = 0; y <= V2_GRID_HEIGHT; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL_SIZE); ctx.lineTo(canvas.width, y * CELL_SIZE); ctx.stroke(); }
 
-        // Beams
+        const currentLoads = calculateLoads({ nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) });
+
         for (const beam of state.beams.values()) {
             const nodeA = state.nodes.get(beam.nodeAId)!;
             const nodeB = state.nodes.get(beam.nodeBId)!;
+            const x1 = nodeA.x * CELL_SIZE, y1 = nodeA.y * CELL_SIZE, x2 = nodeB.x * CELL_SIZE, y2 = nodeB.y * CELL_SIZE;
 
-            const x1 = nodeA.x * CELL_SIZE, y1 = nodeA.y * CELL_SIZE;
-            const x2 = nodeB.x * CELL_SIZE, y2 = nodeB.y * CELL_SIZE;
-
-            // Create gradient for beam
             const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-            if (beam.materialId === "wood") {
-                grad.addColorStop(0, "#8b4513"); grad.addColorStop(0.5, "#a0522d"); grad.addColorStop(1, "#8b4513");
-            } else if (beam.materialId === "metal") {
-                grad.addColorStop(0, "#4682b4"); grad.addColorStop(0.5, "#b0c4de"); grad.addColorStop(1, "#4682b4");
-            } else {
-                grad.addColorStop(0, "#2f4f4f"); grad.addColorStop(0.5, "#708090"); grad.addColorStop(1, "#2f4f4f");
-            }
+            if (beam.materialId === "wood") { grad.addColorStop(0, "#8b4513"); grad.addColorStop(0.5, "#a0522d"); grad.addColorStop(1, "#8b4513"); }
+            else if (beam.materialId === "metal") { grad.addColorStop(0, "#4682b4"); grad.addColorStop(0.5, "#b0c4de"); grad.addColorStop(1, "#4682b4"); }
+            else { grad.addColorStop(0, "#2f4f4f"); grad.addColorStop(0.5, "#708090"); grad.addColorStop(1, "#2f4f4f"); }
+
+            // Stress color overlay
+            const mat = BEAM_MATERIALS[beam.materialId];
+            const load = currentLoads.get(beam.id) ?? 0;
+            const stress = Math.min(1, load / mat.capacity);
 
             ctx.strokeStyle = grad;
             ctx.lineWidth = beam.materialId === "wood" ? 4 : 6;
             ctx.lineCap = "round";
             ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
 
-            // Subtle inner line for "detail"
-            ctx.strokeStyle = "rgba(255,255,255,0.1)";
-            ctx.lineWidth = 1;
-            ctx.stroke();
+            if (stress > 0.5) {
+                ctx.strokeStyle = `rgba(255, 0, 0, ${(stress - 0.5) * 2})`;
+                ctx.lineWidth = 2; ctx.stroke();
+            }
 
-            // Highlight beam owner
             ctx.strokeStyle = beam.owner === 0 ? "rgba(0, 255, 0, 0.2)" : "rgba(255, 0, 0, 0.2)";
-            ctx.lineWidth = 8;
-            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
         }
 
-        // Nodes
         for (const node of state.nodes.values()) {
             ctx.fillStyle = node.id === selectedNodeId ? "#fff" : (node.isGround ? "#555" : (node.owner === 0 ? "#0f0" : "#f00"));
             ctx.beginPath(); ctx.arc(node.x * CELL_SIZE, node.y * CELL_SIZE, 4, 0, Math.PI * 2); ctx.fill();
         }
 
-        // Buildings
         for (const b of state.buildings.values()) {
             const node = state.nodes.get(b.nodeIds[0]!)!;
             const def = BUILDING_CATALOG[b.defId];
             ctx.fillStyle = b.owner === 0 ? "rgba(0, 255, 0, 0.7)" : "rgba(255, 0, 0, 0.7)";
             if (activeWeaponId === b.id) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(node.x * CELL_SIZE - 12, node.y * CELL_SIZE - 12, 24, 24); }
             ctx.fillRect(node.x * CELL_SIZE - 10, node.y * CELL_SIZE - 10, 20, 20);
-            ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.fillText(def.name[0], node.x * CELL_SIZE - 3, node.y * CELL_SIZE + 4);
+            ctx.fillStyle = "#fff"; ctx.font = "10px monospace";
+            ctx.fillText(`${def.name[0]}${b.level}`, node.x * CELL_SIZE - 5, node.y * CELL_SIZE + 4);
             if (!b.isOperational) { ctx.strokeStyle = "#f00"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(node.x*CELL_SIZE-10, node.y*CELL_SIZE-10); ctx.lineTo(node.x*CELL_SIZE+10, node.y*CELL_SIZE+10); ctx.stroke(); }
         }
 
-        // Projectiles
         for (const p of projectiles) {
             const path = p.result.path;
             const index = Math.floor(p.progress * (path.length - 1));
@@ -409,54 +503,28 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             ctx.beginPath(); ctx.arc(point.x * CELL_SIZE, point.y * CELL_SIZE, 4, 0, Math.PI * 2); ctx.fill();
         }
 
-        // Particles
         for (const p of particles) {
-            ctx.globalAlpha = p.life;
-            ctx.fillStyle = p.color;
-            const size = p.color === "#555" ? 6 : 3;
-            ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
+            ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+            const size = p.color === "#555" ? 6 : 3; ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
         }
-        ctx.globalAlpha = 1;
-
-        ctx.restore();
+        ctx.globalAlpha = 1; ctx.restore();
 
         const eco = state.economy[state.currentPlayer].resources;
         const caps = state.economy[state.currentPlayer].caps;
-
         const steelPct = Math.min(100, ((eco.steel ?? 0) / (caps.steel ?? 1)) * 100);
         const ammoPct = Math.min(100, ((eco.ammo ?? 0) / (caps.ammo ?? 1)) * 100);
 
         info.innerHTML = `
             <div>[SYS] PLAYER_${state.currentPlayer} | PHASE: ${state.turnPhase.toUpperCase()}</div>
             <div class="res-gauge">
-                <div class="res-item">
-                    <span>STEEL: ${eco.steel ?? 0}/${caps.steel}</span>
-                    <div class="res-bar"><div class="res-fill" style="width: ${steelPct}%"></div></div>
-                </div>
-                <div class="res-item">
-                    <span>AMMO: ${eco.ammo ?? 0}/${caps.ammo}</span>
-                    <div class="res-bar"><div class="res-fill" style="width: ${ammoPct}%"></div></div>
-                </div>
+                <div class="res-item"><span>STEEL: ${eco.steel ?? 0}/${caps.steel}</span><div class="res-bar"><div class="res-fill" style="width: ${steelPct}%"></div></div></div>
+                <div class="res-item"><span>AMMO: ${eco.ammo ?? 0}/${caps.ammo}</span><div class="res-bar"><div class="res-fill" style="width: ${ammoPct}%"></div></div></div>
             </div>
         `;
     }
 
-    // Online Logic
-    function initSocket() {
-        if (socket) return;
-        socket = io("http://localhost:3000");
-        socket.on("room-created", (code) => { roomCode = code; localPlayerIndex = 0; document.getElementById("room-status")!.textContent = `Комната ${code} создана. Ждем игрока 2...`; });
-        socket.on("room-joined", ({ code, playerIndex }) => { roomCode = code; localPlayerIndex = playerIndex; document.getElementById("room-status")!.textContent = `Присоединились к ${code}. Вы — игрок ${playerIndex}.`; });
-        socket.on("state-updated", (newState) => {
-            state = { ...newState, nodes: new Map(Object.entries(newState.nodes)), beams: new Map(Object.entries(newState.beams)), buildings: new Map(Object.entries(newState.buildings)) };
-            draw();
-        });
-    }
-    function syncState() { if (socket && roomCode) { const syncData = { ...state, nodes: Object.fromEntries(state.nodes), beams: Object.fromEntries(state.beams), buildings: Object.fromEntries(state.buildings) }; socket.emit("sync-state", { code: roomCode, state: syncData }); } }
-    function isLocalTurn() { return localPlayerIndex === null || state.currentPlayer === localPlayerIndex; }
     shell.querySelector("#btn-create-room")?.addEventListener("click", () => { initSocket(); const code = (document.getElementById("room-code-input") as HTMLInputElement).value; socket?.emit("create-room", code || "1234"); }, { signal });
     shell.querySelector("#btn-join-room")?.addEventListener("click", () => { initSocket(); const code = (document.getElementById("room-code-input") as HTMLInputElement).value; socket?.emit("join-room", code || "1234"); }, { signal });
-
     shell.querySelector("#btn-wood")?.addEventListener("click", () => selectedMaterial = "wood", { signal });
     shell.querySelector("#btn-metal")?.addEventListener("click", () => selectedMaterial = "metal", { signal });
     shell.querySelector("#btn-armor")?.addEventListener("click", () => selectedMaterial = "armor_plating", { signal });
@@ -464,10 +532,5 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     updateTabs("dice");
     draw();
 
-    return () => {
-        if (animId) cancelAnimationFrame(animId);
-        socket?.disconnect();
-        ac.abort();
-        root.replaceChildren();
-    };
+    return () => { if (animId) cancelAnimationFrame(animId); socket?.disconnect(); ac.abort(); root.replaceChildren(); };
 }

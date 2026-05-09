@@ -45,6 +45,7 @@ export function createInitialV2Match(): V2MatchState {
         nodeIds: [nodeP0.id],
         hp: BUILDING_CATALOG["core_generator"].hp,
         isOperational: true,
+        level: 1,
     };
 
     const nodeP1 = nodes.get(`ground-1-${w - 1}`)!;
@@ -55,6 +56,7 @@ export function createInitialV2Match(): V2MatchState {
         nodeIds: [nodeP1.id],
         hp: BUILDING_CATALOG["core_generator"].hp,
         isOperational: true,
+        level: 1,
     };
 
     buildings.set(b0.id, b0);
@@ -126,6 +128,7 @@ export function tryPlaceBeam(state: V2MatchState, nodeAId: string, nodeBId: stri
         materialId,
         hp: mat.hp,
         owner,
+        currentLoad: 0,
     });
 
     const nextEco: PlayerEconomy = { ...eco, resources: { ...eco.resources, [rid]: currentRes - mat.cost.amount } };
@@ -160,6 +163,7 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
         nodeIds,
         hp: def.hp,
         isOperational: true,
+        level: 1,
     });
 
     const nextRes = { ...eco.resources };
@@ -169,6 +173,64 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     const nextEco: PlayerEconomy = { ...eco, resources: nextRes };
     const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
     nextEconomies[owner] = nextEco;
+
+    return { ...state, buildings, economy: nextEconomies };
+}
+
+export function tryRepairBuilding(state: V2MatchState, buildingId: string): V2MatchState {
+    const b = state.buildings.get(buildingId);
+    if (!b) return state;
+    const def = BUILDING_CATALOG[b.defId];
+    if (b.hp >= def.hp) return state;
+
+    const cost = 2; // Fixed repair cost for MVP
+    const eco = state.economy[b.owner];
+    if ((eco.resources.steel ?? 0) < cost) return state;
+
+    const buildings = new Map(state.buildings);
+    buildings.set(buildingId, { ...b, hp: def.hp, isOperational: true });
+
+    const nextEco = { ...eco, resources: { ...eco.resources, steel: (eco.resources.steel ?? 0) - cost } };
+    const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
+    nextEconomies[b.owner] = nextEco;
+
+    return { ...state, buildings, economy: nextEconomies };
+}
+
+export function tryDeleteBuilding(state: V2MatchState, buildingId: string): V2MatchState {
+    const buildings = new Map(state.buildings);
+    buildings.delete(buildingId);
+    return { ...state, buildings };
+}
+
+export function tryDeleteBeam(state: V2MatchState, beamId: string): V2MatchState {
+    const beams = new Map(state.beams);
+    beams.delete(beamId);
+    return { ...state, beams };
+}
+
+export function tryUpgradeBuilding(state: V2MatchState, buildingId: string): V2MatchState {
+    const b = state.buildings.get(buildingId);
+    if (!b || b.level >= 2) return state;
+
+    const def = BUILDING_CATALOG[b.defId];
+    if (!def.upgradeCost) return state;
+
+    const eco = state.economy[b.owner];
+    for (const [rid, amount] of Object.entries(def.upgradeCost)) {
+        if ((eco.resources[rid as ResourceId] ?? 0) < (amount as number)) return state;
+    }
+
+    const buildings = new Map(state.buildings);
+    buildings.set(buildingId, { ...b, level: 2 });
+
+    const nextRes = { ...eco.resources };
+    for (const [rid, amount] of Object.entries(def.upgradeCost)) {
+        nextRes[rid as ResourceId] = (nextRes[rid as ResourceId] ?? 0) - (amount as number);
+    }
+    const nextEco: PlayerEconomy = { ...eco, resources: nextRes };
+    const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
+    nextEconomies[b.owner] = nextEco;
 
     return { ...state, buildings, economy: nextEconomies };
 }

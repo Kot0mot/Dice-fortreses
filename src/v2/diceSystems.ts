@@ -11,10 +11,16 @@ export function getDicePoolDefinitions(state: V2MatchState, player: 0 | 1): stri
     for (const b of state.buildings.values()) {
         if (b.owner === player && b.isOperational) {
             const def = BUILDING_CATALOG[b.defId];
-            if (def && def.diceContribution) {
-                for (const contrib of def.diceContribution) {
-                    for (let i = 0; i < contrib.count; i++) {
-                        pool.push(contrib.templateId);
+            if (def) {
+                const contribs = (b.level >= 2 && def.upgradedDiceContribution)
+                    ? def.upgradedDiceContribution
+                    : def.diceContribution;
+
+                if (contribs) {
+                    for (const contrib of contribs) {
+                        for (let i = 0; i < contrib.count; i++) {
+                            pool.push(contrib.templateId);
+                        }
                     }
                 }
             }
@@ -48,9 +54,10 @@ export function applyDiceResults(state: V2MatchState, results: readonly RolledDi
     const buildings = new Map(state.buildings);
 
     for (const r of results) {
-        if (r.yield.resourceId && r.yield.amount) {
-            const rid = r.yield.resourceId;
-            gains[rid] = (gains[rid] ?? 0) + r.yield.amount;
+        const rid = r.yield.resourceId;
+        const amount = r.yield.amount;
+        if (rid && amount !== undefined) {
+            gains[rid] = (gains[rid] ?? 0) + amount;
         }
         if (r.yield.effectId === "disable_generator") {
             // Выводим случайный генератор игрока из строя на 1 ход

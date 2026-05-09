@@ -56,6 +56,7 @@ export interface V2Beam {
     readonly materialId: BeamMaterialId;
     readonly hp: number;
     readonly owner: OwnerId;
+    readonly currentLoad: number; // Текущая нагрузка (вес)
 }
 
 /** Здание, установленное на конструкцию */
@@ -65,7 +66,8 @@ export interface BuildingInstance {
     readonly owner: OwnerId;
     readonly nodeIds: readonly string[]; // Узлы, к которым прикреплено здание
     readonly hp: number;
-    readonly isOperational: boolean; // Может ли работать (не выведено ли из строя негативной гранью)
+    readonly isOperational: boolean; // Может ли работать
+    readonly level: number; // Уровень постройки (1 или 2)
 }
 
 export type V2Cell = { type: "empty" } | { type: "node"; nodeId: string };
