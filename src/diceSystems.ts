@@ -1,7 +1,7 @@
 import type { V2MatchState } from "./matchState.js";
 import { BUILDING_CATALOG, DICE_TEMPLATES } from "./catalog.js";
 import { rollCustomDie, type RolledDieResult } from "./customDie.js";
-import type { Rng } from "../types.js";
+import type { Rng } from "./types.js";
 import { applyResourceGains, recalculateCaps } from "./economy.js";
 import type { ResourceBag } from "./resources.js";
 

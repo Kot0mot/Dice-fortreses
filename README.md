@@ -1,51 +1,26 @@
-# Dice Fortresses (v2 Sandbox & Online Multiplayer)
+# Dice Fortresses
 
-Гибрид идей из **Dice Kingdoms** и **Forts**: пошаговая стратегия с физикой конструкций, кастомными кубиками и онлайн-мультиплеером.
+**Dice Fortresses** — hybrid of **Dice Kingdoms** and **Forts**: turn-based strategy with structural physics and dice-based economy.
 
-## Как запустить v2 и Онлайн
+## Key Features
 
-### 1. Подготовка
-```bash
-npm install
-npm run build
-```
+- **Structural Physics:** Node-and-beam construction. Overload or break connections to cause collapses.
+- **Dice Economy:** Your dice pool is determined by your buildings. Upgrade buildings to get superior dice.
+- **Combat:** Multi-damage type system (Kinetic, Energy, Blast) with material-specific resistances.
+- **Campaign:** Persistent stage-based progression with random perks.
+- **Multiplayer:** 1v1 online multiplayer via Socket.io.
+- **AI:** Smart opponent with 3 difficulty levels.
 
-### 2. Запуск сервера (для онлайн-игры)
-Для синхронизации ходов между игроками нужно запустить сервер:
-```bash
-npm run server
-```
-Сервер запустится на порту **3000**.
+## Getting Started
 
-### 3. Запуск клиента
-В отдельном терминале запустите веб-интерфейс:
-```bash
-npm run web:dev
-```
-Откройте в браузере (обычно `http://localhost:5173` или `5174`).
+1. Install dependencies: `npm install`
+2. Run development web server: `npm run web:dev`
+3. Build for production: `npm run web:build`
+4. Run tests: `npm test`
+5. Run server: `npm run server`
 
-### 4. Как играть онлайн
-1. В главном меню нажмите **«Режим v2 (песочница)»**.
-2. В появившейся панели вверху введите любой **Код комнаты** (например, `abc`) и нажмите **Создать**.
-3. Откройте вторую вкладку браузера по тому же адресу, введите тот же код комнаты и нажмите **Присоединиться**.
-4. Теперь ваши действия (постройка узлов, балок, выстрелы) будут синхронизироваться между вкладками.
+## Project Structure
 
-## Особенности v2 Sandbox
-
-- **Физика конструкций:** Балки имеют вес и лимит нагрузки. Если опора разрушена или нагрузка слишком велика — часть базы обрушится.
-- **Кастомные кубики:** Пул кубов зависит от ваших построек (генераторы, заводы). Улучшение здания до Lv2 дает более мощные кубики.
-- **Типы урона и брони:**
-  - **Кинетический:** Хорош против дерева, слаб против брони.
-  - **Энергетический:** Пробивает броню, но поглощается энергощитами.
-  - **Взрывной:** Наносит большой урон по площади конструкций.
-- **Древо технологий:** Продвинутые пушки и здания требуют наличия работающей Тех-станции.
-- **Кампания и ИИ:** Доступен режим одиночной кампании с выбором улучшений (Perks) и 3 уровнями сложности бота.
-
-## Другие режимы (Classic)
-
-- CLI: `npm run proto`
-- Demo: `npm run demo`
-- Тесты: `npm test`
-
-## Quality Gate
-- `npm run check` (полная проверка: линт, тесты, сборка, демо)
+- `src/`: Core game logic (physics, economy, combat).
+- `web/`: Frontend (Canvas-based renderer, UI).
+- `tests/`: Unit tests.

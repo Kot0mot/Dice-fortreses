@@ -265,3 +265,16 @@ body::after {
     background: #00ff00;
     color: #000;
 }
+
+/* v2 App Layout */
+.v2-body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+}
+
+#v2-app-root {
+    width: 100vw;
+    height: 100vh;
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, tryRepairAll } from "../src/v2/matchState.js";
-import { performCollapse } from "../src/v2/physics.js";
+import { createInitialV2Match, tryPlaceNode, tryPlaceBeam, tryPlaceBuilding, tryRepairAll } from "../src/matchState.js";
+import { performCollapse } from "../src/physics.js";
 
 describe("Dice Fortresses v2 Advanced Mechanics", () => {
     it("should collapse structures not connected to ground", () => {

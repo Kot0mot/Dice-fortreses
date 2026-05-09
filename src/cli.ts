@@ -2,8 +2,8 @@
  * Dice Fortresses CLI - v2 Sandbox.
  */
 import { DiceFortsRng } from "./random.js";
-import { createInitialV2Match } from "./v2/matchState.js";
-import { getDicePoolDefinitions, rollInitialDice, applyDiceResults } from "./v2/diceSystems.js";
+import { createInitialV2Match } from "./matchState.js";
+import { getDicePoolDefinitions, rollInitialDice, applyDiceResults } from "./diceSystems.js";
 
 async function main() {
     console.log("Dice Fortresses v2 Sandbox CLI");

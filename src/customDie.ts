@@ -26,7 +26,7 @@ export function assertValidDieDefinition(def: CustomDieDefinition): void {
     }
 }
 
-import type { Rng } from "../types.js";
+import type { Rng } from "./types.js";
 
 export function rollCustomDie(def: CustomDieDefinition, dieInstanceKey: string, rng: Rng): RolledDieResult {
     assertValidDieDefinition(def);

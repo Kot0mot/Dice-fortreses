@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { Rng } from "../src/types.js";
-import { assertValidDieDefinition, rollCustomDie } from "../src/v2/customDie.js";
-import { STARTER_CUBE } from "../src/v2/catalog.js";
-import { createInitialV2Match } from "../src/v2/matchState.js";
-import { getDicePoolDefinitions } from "../src/v2/diceSystems.js";
+import { assertValidDieDefinition, rollCustomDie } from "../src/customDie.js";
+import { STARTER_CUBE } from "../src/catalog.js";
+import { createInitialV2Match } from "../src/matchState.js";
+import { getDicePoolDefinitions } from "../src/diceSystems.js";
 
 const mockRng = (next: number): Rng => ({
     nextInt: (_min: number, _max: number) => next,

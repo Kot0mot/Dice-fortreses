@@ -1,7 +1,7 @@
 import type { V2MatchState } from "./matchState.js";
 import { BUILDING_CATALOG, DICE_TEMPLATES } from "./catalog.js";
 import { rollCustomDie, type RolledDieResult } from "./customDie.js";
-import type { Rng } from "../types.js";
+import type { Rng } from "./types.js";
 import { applyDiceResults, rollInitialDice } from "./diceSystems.js";
 import { tryPlaceNode, tryPlaceBeam, tryPlaceBuilding } from "./matchState.js";
 import { fireWeapon, isWithinFiringCone } from "./combat.js";
