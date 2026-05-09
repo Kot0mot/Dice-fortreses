@@ -1,6 +1,6 @@
 import type { V2MatchState } from "./matchState.js";
 import { BUILDING_CATALOG } from "./catalog.js";
-import type { OwnerId } from "./mapTypes.js";
+import { type OwnerId, BEAM_MATERIALS } from "./mapTypes.js";
 
 export interface WeaponGroup {
     readonly weaponIds: string[];
@@ -88,13 +88,18 @@ export function fireWeapon(
 
     // Проверяем попадание (упрощенно по координатам)
     let hitBuildingId: string | undefined;
+    let hitBeamId: string | undefined;
+    let finalDamage = def.damage ?? 0;
+    const damageType = def.damageType ?? "kinetic";
+
     const buildings = new Map(nextState.buildings);
     for (const [bid, b] of buildings) {
         if (b.owner !== weapon.owner) {
             const node = nextState.nodes.get(b.nodeIds[0]!);
-            if (node && node.x === targetX && node.y === targetY) {
+            if (node && Math.round(node.x) === targetX && Math.round(node.y) === targetY) {
                 hitBuildingId = bid;
-                const nextHp = b.hp - (def.damage ?? 0);
+                // Buildings don't have resistances yet, using raw damage
+                const nextHp = b.hp - finalDamage;
                 if (nextHp <= 0) buildings.delete(bid);
                 else buildings.set(bid, { ...b, hp: nextHp });
                 break;
@@ -104,15 +109,48 @@ export function fireWeapon(
 
     nextState = { ...nextState, buildings };
 
+    if (!hitBuildingId) {
+        const beams = new Map(nextState.beams);
+        for (const [bid, beam] of beams) {
+            if (beam.owner !== weapon.owner) {
+                const nodeA = nextState.nodes.get(beam.nodeAId)!;
+                const nodeB = nextState.nodes.get(beam.nodeBId)!;
+                if (isPointNearBeam(targetX, targetY, nodeA, nodeB)) {
+                    hitBeamId = bid;
+                    const mat = BEAM_MATERIALS[beam.materialId];
+                    const multiplier = mat.resistances[damageType] ?? 1.0;
+                    const dmg = finalDamage * multiplier;
+
+                    const nextHp = beam.hp - dmg;
+                    if (nextHp <= 0) beams.delete(bid);
+                    else beams.set(bid, { ...beam, hp: nextHp });
+                    break;
+                }
+            }
+        }
+        nextState = { ...nextState, beams };
+    }
+
     return {
         nextState,
         result: {
             shooterId: weaponId,
             targetX,
             targetY,
-            damageDealt: def.damage ?? 0,
+            damageDealt: finalDamage,
             hitBuildingId,
+            hitBeamId,
             path,
         }
     };
+}
+
+function isPointNearBeam(px: number, py: number, a: {x:number, y:number}, b: {x:number, y:number}): boolean {
+    const threshold = 0.5;
+    const l2 = (a.x - b.x)**2 + (a.y - b.y)**2;
+    if (l2 === 0) return Math.sqrt((px - a.x)**2 + (py - a.y)**2) < threshold;
+    let t = ((px - a.x) * (b.x - a.x) + (py - a.y) * (b.y - a.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const dist = Math.sqrt((px - (a.x + t * (b.x - a.x)))**2 + (py - (a.y + t * (b.y - a.y)))**2);
+    return dist < threshold;
 }

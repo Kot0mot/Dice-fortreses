@@ -197,6 +197,21 @@ body::after {
     color: #000;
 }
 
+.divider {
+    width: 1px;
+    height: 20px;
+    background: #343b4d;
+    margin: 0 10px;
+}
+
+#select-ai-difficulty {
+    background: #131a2b;
+    color: #00ff00;
+    border: 1px solid #4a5470;
+    padding: 4px;
+    font-family: monospace;
+}
+
 .context-menu {
     position: fixed;
     background: #1a2030;

@@ -45,6 +45,8 @@ export type BuildingKind =
     | "storage"
     | "repair_station";
 
+import type { DamageType } from "./mapTypes.js";
+
 export interface BuildingDefV2 {
     readonly id: string;
     readonly name: string;
@@ -57,6 +59,7 @@ export interface BuildingDefV2 {
     readonly upgradedDiceContribution?: readonly BuildingDefContribution[];
     readonly ammoPerShot?: number;
     readonly damage?: number;
+    readonly damageType?: DamageType;
     readonly reloadTime?: number;
     readonly resourceCapBonus?: Partial<Record<ResourceId, number>>;
     readonly techRequired?: string;
@@ -85,6 +88,28 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         diceContribution: [{ templateId: "steel_die", count: 1 }],
         upgradedDiceContribution: [{ templateId: "mega_steel_die", count: 1 }],
     },
+    power_plant: {
+        id: "power_plant",
+        name: "Электростанция",
+        kind: "generator",
+        hp: 150,
+        weight: 25,
+        cost: { steel: 20, ore: 10 },
+        upgradeCost: { steel: 30, tech_fragment: 15 },
+        diceContribution: [{ templateId: "power_die", count: 1 }],
+        upgradedDiceContribution: [{ templateId: "mega_power_die", count: 1 }],
+    },
+    ammo_factory: {
+        id: "ammo_factory",
+        name: "Завод БК",
+        kind: "generator",
+        hp: 180,
+        weight: 30,
+        cost: { steel: 20, ore: 15 },
+        upgradeCost: { steel: 35, tech_fragment: 20 },
+        diceContribution: [{ templateId: "ammo_die", count: 1 }],
+        upgradedDiceContribution: [{ templateId: "mega_ammo_die", count: 1 }],
+    },
     machine_gun: {
         id: "machine_gun",
         name: "Пулемет",
@@ -94,6 +119,7 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         cost: { steel: 15, power: 2 },
         ammoPerShot: 1,
         damage: 10,
+        damageType: "kinetic",
     },
     cannon: {
         id: "cannon",
@@ -104,6 +130,19 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         cost: { steel: 25, power: 5 },
         ammoPerShot: 3,
         damage: 50,
+        damageType: "blast",
+        techRequired: "tech_station",
+    },
+    laser_turret: {
+        id: "laser_turret",
+        name: "Лазер",
+        kind: "weapon",
+        hp: 120,
+        weight: 30,
+        cost: { steel: 30, power: 15 },
+        ammoPerShot: 5,
+        damage: 40,
+        damageType: "energy",
         techRequired: "tech_station",
     },
     tech_station: {
@@ -114,14 +153,33 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         weight: 25,
         cost: { steel: 20, power: 10 },
     },
-    storage_depot: {
-        id: "storage_depot",
-        name: "Склад",
+    storage_steel: {
+        id: "storage_steel",
+        name: "Склад стали",
         kind: "storage",
         hp: 150,
         weight: 20,
         cost: { steel: 10 },
-        resourceCapBonus: { steel: 50, ore: 50, ammo: 20 },
+        resourceCapBonus: { steel: 100 },
+    },
+    storage_ammo: {
+        id: "storage_ammo",
+        name: "Склад БК",
+        kind: "storage",
+        hp: 150,
+        weight: 20,
+        cost: { steel: 10 },
+        resourceCapBonus: { ammo: 50 },
+    },
+    storage_power: {
+        id: "storage_power",
+        name: "Батарея",
+        kind: "storage",
+        hp: 100,
+        weight: 15,
+        cost: { steel: 10, ore: 5 },
+        resourceCapBonus: { power: 50 },
+        techRequired: "power_plant",
     },
     repair_station: {
         id: "repair_station",
@@ -155,6 +213,50 @@ export const ADDITIONAL_DICE: CustomDieDefinition[] = [
             { resourceId: "steel", amount: 4 },
             { resourceId: "ore", amount: 2 },
             { resourceId: "power", amount: 2 },
+        ]
+    },
+    {
+        id: "power_die",
+        faces: [
+            { resourceId: "power", amount: 2 },
+            { resourceId: "power", amount: 2 },
+            { resourceId: "power", amount: 1 },
+            { resourceId: "steel", amount: 1 },
+            { resourceId: "tech_fragment", amount: 1 },
+            { effectId: "disable_generator" },
+        ]
+    },
+    {
+        id: "mega_power_die",
+        faces: [
+            { resourceId: "power", amount: 4 },
+            { resourceId: "power", amount: 4 },
+            { resourceId: "power", amount: 3 },
+            { resourceId: "power", amount: 3 },
+            { resourceId: "steel", amount: 2 },
+            { resourceId: "power", amount: 2 },
+        ]
+    },
+    {
+        id: "ammo_die",
+        faces: [
+            { resourceId: "ammo", amount: 3 },
+            { resourceId: "ammo", amount: 2 },
+            { resourceId: "ammo", amount: 2 },
+            { resourceId: "ore", amount: 1 },
+            { resourceId: "steel", amount: 1 },
+            { effectId: "disable_generator" },
+        ]
+    },
+    {
+        id: "mega_ammo_die",
+        faces: [
+            { resourceId: "ammo", amount: 6 },
+            { resourceId: "ammo", amount: 5 },
+            { resourceId: "ammo", amount: 4 },
+            { resourceId: "ammo", amount: 4 },
+            { resourceId: "steel", amount: 2 },
+            { resourceId: "ammo", amount: 2 },
         ]
     }
 ];

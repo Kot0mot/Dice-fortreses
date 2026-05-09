@@ -151,5 +151,23 @@ export function performCollapse(state: StructuralState): { collapsedBeams: strin
         }
     }
 
+    // 5. Повторная проверка операбельности на основе технологий
+    if (state.buildings) {
+        for (const [bid, b] of state.buildings.entries()) {
+            const def = BUILDING_CATALOG[b.defId];
+            if (def.techRequired) {
+                const hasTech = Array.from(state.buildings.values()).some(
+                    other => other.owner === b.owner && other.defId === def.techRequired && other.isOperational
+                );
+                if (!hasTech && b.isOperational) {
+                    state.buildings.set(bid, { ...b, isOperational: false });
+                } else if (hasTech && !b.isOperational && b.hp > 0) {
+                     // Auto-restore if tech is back (and building wasn't manually disabled)
+                     state.buildings.set(bid, { ...b, isOperational: true });
+                }
+            }
+        }
+    }
+
     return { collapsedBeams, collapsedNodes };
 }

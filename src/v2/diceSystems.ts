@@ -48,6 +48,38 @@ export function rollInitialDice(state: V2MatchState, rng: Rng): { results: Rolle
     return { results, nextState };
 }
 
+/** Проверка доступности технологий игрока */
+export function checkTechAvailability(state: V2MatchState, player: 0 | 1): Set<string> {
+    const activeTech = new Set<string>();
+    for (const b of state.buildings.values()) {
+        if (b.owner === player && b.isOperational) {
+            activeTech.add(b.defId);
+        }
+    }
+    return activeTech;
+}
+
+/** Обновить статус работоспособности всех зданий на основе технологий */
+export function refreshBuildingOperationalStatus(state: V2MatchState): V2MatchState {
+    const buildings = new Map(state.buildings);
+    let changed = false;
+
+    for (const [id, b] of buildings) {
+        const def = BUILDING_CATALOG[b.defId];
+        if (def.techRequired) {
+            const hasTech = Array.from(buildings.values()).some(
+                other => other.owner === b.owner && other.defId === def.techRequired && other.isOperational
+            );
+            if (b.isOperational !== hasTech) {
+                buildings.set(id, { ...b, isOperational: hasTech });
+                changed = true;
+            }
+        }
+    }
+
+    return changed ? { ...state, buildings } : state;
+}
+
 /** Применение результатов кубов к экономике и состоянию */
 export function applyDiceResults(state: V2MatchState, results: readonly RolledDieResult[]): V2MatchState {
     const gains: ResourceBag = {};

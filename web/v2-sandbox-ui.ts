@@ -9,6 +9,7 @@ import { rollInitialDice, applyDiceResults } from "../src/v2/diceSystems.js";
 import type { RolledDieResult } from "../src/v2/customDie.js";
 import { performCollapse, calculateLoads } from "../src/v2/physics.js";
 import { fireWeapon, isWithinFiringCone, type FiringResult } from "../src/v2/combat.js";
+import { runAiTurn, type AiDifficulty } from "../src/v2/ai.js";
 import { BUILDING_CATALOG } from "../src/v2/catalog.js";
 import { io, Socket } from "socket.io-client";
 
@@ -48,6 +49,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     let socket: Socket | null = null;
     let roomCode: string | null = null;
     let localPlayerIndex: 0 | 1 | null = null;
+    let vsAiDifficulty: AiDifficulty | null = null;
     let animId: number | null = null;
 
     const shell = document.createElement("div");
@@ -56,9 +58,20 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     const onlinePanel = document.createElement("div");
     onlinePanel.className = "panel";
     onlinePanel.innerHTML = `
-        <input id="room-code-input" placeholder="Код комнаты" />
-        <button id="btn-create-room">Создать</button>
-        <button id="btn-join-room">Присоединиться</button>
+        <div style="display:flex; gap: 10px; align-items:center;">
+            <input id="room-code-input" placeholder="Код комнаты" style="width:100px" />
+            <button id="btn-create-room">Создать</button>
+            <button id="btn-join-room">Присоединиться</button>
+            <div class="divider"></div>
+            <span>VS AI:</span>
+            <select id="select-ai-difficulty">
+                <option value="none">None</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+            </select>
+            <button id="btn-start-ai">Start AI Match</button>
+        </div>
         <div id="room-status" class="muted"></div>
     `;
 
@@ -98,18 +111,25 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             <button id="btn-wood">🪵 Дерево</button>
             <button id="btn-metal">⛓️ Металл</button>
             <button id="btn-armor">🛡️ Броня</button>
+            <button id="btn-shield">💠 Щит</button>
             <button id="btn-finish-build">Завершить</button>
         </div>
         <div id="tab-content-weapons" class="v2-toolbar hidden">
             <button data-b="machine_gun">🔫 Пулемет</button>
             <button data-b="cannon">💣 Пушка</button>
+            <button data-b="laser_turret">🔦 Лазер</button>
         </div>
         <div id="tab-content-tech" class="v2-toolbar hidden">
             <button data-b="repair_station">🔧 Ремонт</button>
             <button data-b="tech_station">🔬 Тех-станция</button>
+            <button data-b="steel_foundry">🏗️ Завод стали</button>
+            <button data-b="power_plant">⚡ Электростанция</button>
+            <button data-b="ammo_factory">🏭 Завод БК</button>
         </div>
         <div id="tab-content-storage" class="v2-toolbar hidden">
-            <button data-b="storage_depot">📦 Склад</button>
+            <button data-b="storage_steel">📦 Склад стали</button>
+            <button data-b="storage_ammo">🧨 Склад БК</button>
+            <button data-b="storage_power">🔋 Батарея</button>
         </div>
         <div id="tab-content-combat" class="v2-toolbar hidden">
             <div id="weapon-list"></div>
@@ -297,6 +317,16 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         activeWeaponId = null;
         updateTabs("dice");
         syncState();
+
+        if (vsAiDifficulty && state.currentPlayer === 1) {
+            setTimeout(() => {
+                const aiResult = runAiTurn(state, vsAiDifficulty!, rng);
+                state = aiResult.nextState;
+                console.log("AI Actions:", aiResult.actions);
+                updateTabs("dice");
+                syncState();
+            }, 1000);
+        }
     }, { signal });
 
     shell.querySelectorAll(".v2-toolbar button[data-b]").forEach(btn => btn.addEventListener("click", () => {
@@ -458,6 +488,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             const grad = ctx.createLinearGradient(x1, y1, x2, y2);
             if (beam.materialId === "wood") { grad.addColorStop(0, "#8b4513"); grad.addColorStop(0.5, "#a0522d"); grad.addColorStop(1, "#8b4513"); }
             else if (beam.materialId === "metal") { grad.addColorStop(0, "#4682b4"); grad.addColorStop(0.5, "#b0c4de"); grad.addColorStop(1, "#4682b4"); }
+            else if (beam.materialId === "energy_shield") { grad.addColorStop(0, "#00ffff"); grad.addColorStop(0.5, "#ffffff"); grad.addColorStop(1, "#00ffff"); }
             else { grad.addColorStop(0, "#2f4f4f"); grad.addColorStop(0.5, "#708090"); grad.addColorStop(1, "#2f4f4f"); }
 
             // Stress color overlay
@@ -525,9 +556,17 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     shell.querySelector("#btn-create-room")?.addEventListener("click", () => { initSocket(); const code = (document.getElementById("room-code-input") as HTMLInputElement).value; socket?.emit("create-room", code || "1234"); }, { signal });
     shell.querySelector("#btn-join-room")?.addEventListener("click", () => { initSocket(); const code = (document.getElementById("room-code-input") as HTMLInputElement).value; socket?.emit("join-room", code || "1234"); }, { signal });
+    shell.querySelector("#btn-start-ai")?.addEventListener("click", () => {
+        const diff = (document.getElementById("select-ai-difficulty") as HTMLSelectElement).value;
+        if (diff === "none") return;
+        vsAiDifficulty = diff as AiDifficulty;
+        localPlayerIndex = 0;
+        document.getElementById("room-status")!.textContent = `Playing vs AI (${diff})`;
+    }, { signal });
     shell.querySelector("#btn-wood")?.addEventListener("click", () => selectedMaterial = "wood", { signal });
     shell.querySelector("#btn-metal")?.addEventListener("click", () => selectedMaterial = "metal", { signal });
     shell.querySelector("#btn-armor")?.addEventListener("click", () => selectedMaterial = "armor_plating", { signal });
+    shell.querySelector("#btn-shield")?.addEventListener("click", () => selectedMaterial = "energy_shield", { signal });
 
     updateTabs("dice");
     draw();
