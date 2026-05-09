@@ -122,6 +122,13 @@ button:disabled {
     border-color: #00ff00;
 }
 
+.v2-toolbar button.active {
+    background: #00ff00;
+    color: #000;
+    border-color: #00ff00;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
 .v2-toolbar {
     background: #1a2030;
     border: 1px solid #343b4d;

@@ -42,7 +42,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     let rolledDice: RolledDieResult[] = [];
     let heldIndices = new Set<number>();
     let currentTab = "dice";
-    let activeWeaponId: string | null = null;
+    let activeWeaponIds: string[] = [];
     let projectiles: AnimatedProjectile[] = [];
     let particles: Particle[] = [];
     let screenShake = 0;
@@ -255,6 +255,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
                 beams: new Map(Object.entries(newState.beams)),
                 buildings: new Map(Object.entries(newState.buildings))
             };
+            draw();
         });
     }
     function syncState() { if (socket && roomCode) { const syncData = { ...state, nodes: Object.fromEntries(state.nodes), beams: Object.fromEntries(state.beams), buildings: Object.fromEntries(state.buildings) }; socket.emit("sync-state", { code: roomCode, state: syncData }); } }
@@ -318,7 +319,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     shell.querySelector("#btn-next-turn")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
         state = { ...state, currentPlayer: state.currentPlayer === 0 ? 1 : 0, turnPhase: "dice", rerollsLeft: 2 };
-        activeWeaponId = null;
+        activeWeaponIds = [];
         updateTabs("dice");
         syncState();
 
@@ -342,19 +343,49 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
     function renderWeaponList() {
         const list = shell.querySelector("#weapon-list")!;
         list.innerHTML = "";
-        for (const b of state.buildings.values()) {
-            if (b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon") {
-                const btn = document.createElement("button");
-                btn.textContent = `${BUILDING_CATALOG[b.defId].name} (Lv${b.level})`;
-                btn.onclick = () => {
-                    activeWeaponId = b.id;
-                    renderWeaponList();
-                };
-                if (activeWeaponId === b.id) btn.classList.add("active");
-                list.appendChild(btn);
+        const weapons = Array.from(state.buildings.values()).filter(b => b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon");
+
+        weapons.forEach((b, idx) => {
+            const btn = document.createElement("button");
+            btn.textContent = `[${idx+1}] ${BUILDING_CATALOG[b.defId].name} (Lv${b.level})`;
+            btn.onclick = (e) => {
+                if (e.shiftKey) {
+                    if (activeWeaponIds.includes(b.id)) {
+                        activeWeaponIds = activeWeaponIds.filter(id => id !== b.id);
+                    } else if (activeWeaponIds.length < 3) {
+                        activeWeaponIds.push(b.id);
+                    }
+                } else {
+                    activeWeaponIds = [b.id];
+                }
+                renderWeaponList();
+            };
+            if (activeWeaponIds.includes(b.id)) btn.classList.add("active");
+            list.appendChild(btn);
+        });
+    }
+
+    window.addEventListener("keydown", (e) => {
+        if (appState.screen !== "v2sandbox" || currentTab !== "combat") return;
+        const num = parseInt(e.key);
+        if (num >= 1 && num <= 9) {
+            const weapons = Array.from(state.buildings.values()).filter(b => b.owner === state.currentPlayer && BUILDING_CATALOG[b.defId].kind === "weapon");
+            const target = weapons[num - 1];
+            if (target) {
+                if (e.shiftKey) {
+                    if (activeWeaponIds.includes(target.id)) {
+                        activeWeaponIds = activeWeaponIds.filter(id => id !== target.id);
+                    } else if (activeWeaponIds.length < 3) {
+                        activeWeaponIds.push(target.id);
+                    }
+                } else {
+                    activeWeaponIds = [target.id];
+                }
+                renderWeaponList();
+                draw();
             }
         }
-    }
+    }, { signal });
 
     function renderDice() {
         dicePanel.innerHTML = "";
@@ -409,29 +440,33 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             if (clickedNode) {
                 state = tryPlaceBuilding(state, selectedBuildingId, [clickedNode.id], state.currentPlayer, campaign?.unlockedPerks || []);
             }
-        } else if (currentTab === "combat" && activeWeaponId) {
-            const { nextState, result } = fireWeapon(state, activeWeaponId, pos.x, pos.y);
-            state = nextState;
-            if (result) {
-                projectiles.push({ result, progress: 0 });
+        } else if (currentTab === "combat" && activeWeaponIds.length > 0) {
+            for (const wid of activeWeaponIds) {
+                const { nextState, result } = fireWeapon(state, wid, pos.x, pos.y);
+                state = nextState;
+                if (result) {
+                    projectiles.push({ result, progress: 0 });
+                }
             }
         }
         draw();
     }, { signal });
 
     canvas.addEventListener("mousemove", (evt) => {
-        if (currentTab === "combat" && activeWeaponId) {
+        if (currentTab === "combat" && activeWeaponIds.length > 0) {
             const pos = getMousePos(evt);
-            const weapon = state.buildings.get(activeWeaponId)!;
-            const node = state.nodes.get(weapon.nodeIds[0]!)!;
-
             draw();
             ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = isWithinFiringCone(node.x, node.y, pos.x, pos.y, state.currentPlayer) ? "#0f0" : "#f00";
-            ctx.beginPath();
-            ctx.moveTo(node.x * CELL_SIZE, node.y * CELL_SIZE);
-            ctx.lineTo(pos.rawX, pos.rawY);
-            ctx.stroke();
+            for (const wid of activeWeaponIds) {
+                const weapon = state.buildings.get(wid);
+                if (!weapon) continue;
+                const node = state.nodes.get(weapon.nodeIds[0]!)!;
+                ctx.strokeStyle = isWithinFiringCone(node.x, node.y, pos.x, pos.y, state.currentPlayer) ? "#0f0" : "#f00";
+                ctx.beginPath();
+                ctx.moveTo(node.x * CELL_SIZE, node.y * CELL_SIZE);
+                ctx.lineTo(pos.rawX, pos.rawY);
+                ctx.stroke();
+            }
             ctx.setLineDash([]);
         }
     }, { signal });
@@ -558,7 +593,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
             const node = state.nodes.get(b.nodeIds[0]!)!;
             const def = BUILDING_CATALOG[b.defId];
             ctx.fillStyle = b.owner === 0 ? "rgba(0, 255, 0, 0.7)" : "rgba(255, 0, 0, 0.7)";
-            if (activeWeaponId === b.id) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(node.x * CELL_SIZE - 12, node.y * CELL_SIZE - 12, 24, 24); }
+            if (activeWeaponIds.includes(b.id)) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(node.x * CELL_SIZE - 12, node.y * CELL_SIZE - 12, 24, 24); }
             ctx.fillRect(node.x * CELL_SIZE - 10, node.y * CELL_SIZE - 10, 20, 20);
             ctx.fillStyle = "#fff"; ctx.font = "10px monospace";
             ctx.fillText(`${def.name[0]}${b.level}`, node.x * CELL_SIZE - 5, node.y * CELL_SIZE + 4);
