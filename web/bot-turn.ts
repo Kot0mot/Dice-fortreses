@@ -8,11 +8,11 @@ import {
 import type { DiceFortsRng } from "../src/random.js";
 import { isValidSlotPartition, resolveDiceFortsSlots } from "../src/rules.js";
 import { opponentOf, patchPlayerSecrets, type MatchState, type PlayerId } from "../src/state.js";
-import { getBotStrategy } from "../src/sim/bots.js";
-import type { BotName } from "../src/sim/types.js";
 import type { BuildCommand } from "../src/game.js";
 import type { DiceFortsSlotResolution, DiceFortsSlots } from "../src/types.js";
 import type { SlotName } from "./ui-helpers.js";
+import { planBotTurn } from "./bot/strategies.js";
+import type { BotDecisionLog, BotDifficulty } from "./bot/types.js";
 
 export type GameMode = "hotseat" | "vsBot";
 
@@ -25,6 +25,7 @@ export interface BotTurnResult {
     buildCommands: BuildCommand[];
     armColumn: number | null;
     rerolled: boolean;
+    decisionLog: BotDecisionLog;
 }
 
 export function shouldStartBotTurn(
@@ -38,6 +39,10 @@ export function shouldStartBotTurn(
 
 export function isUiLockedForBotTurn(isBotActing: boolean): boolean {
     return isBotActing;
+}
+
+export function claimBotTurnLock(gameMode: GameMode, currentPlayer: PlayerId, isBotActing: boolean, winner: PlayerId | null): boolean {
+    return shouldStartBotTurn(gameMode, currentPlayer, isBotActing, winner);
 }
 
 function toAssignments(hand: readonly number[], slots: DiceFortsSlots): SlotName[] {
@@ -66,28 +71,47 @@ function toAssignments(hand: readonly number[], slots: DiceFortsSlots): SlotName
     });
 }
 
-export function runBotTurn(match: MatchState, hand: readonly number[], rng: DiceFortsRng, botName: BotName = "balanced"): BotTurnResult {
+export function runBotTurn(
+    match: MatchState,
+    hand: readonly number[],
+    rng: DiceFortsRng,
+    difficulty: BotDifficulty = "medium"
+): BotTurnResult {
     const playerId = match.currentPlayer;
-    const bot = getBotStrategy(botName);
     let state = match;
     let botHand = [...hand];
     let rerolled = false;
-
-    if (bot.shouldReroll({ playerId, state, hand: botHand, rerollsLeft: state.rerollsLeftThisTurn })) {
+    let plan = planBotTurn({
+        difficulty,
+        playerId,
+        state,
+        hand: botHand,
+        rerollsLeft: state.rerollsLeftThisTurn,
+        rng,
+    });
+    if (plan.reroll) {
         const rerollOut = applyHandReroll(state, rng);
         if (rerollOut) {
             state = rerollOut.state;
             botHand = rerollOut.hand;
             rerolled = true;
+            plan = planBotTurn({
+                difficulty,
+                playerId,
+                state,
+                hand: botHand,
+                rerollsLeft: state.rerollsLeftThisTurn,
+                rng,
+            });
         }
     }
 
-    const slots = bot.pickSlots({ playerId, state, hand: botHand, rerollsLeft: state.rerollsLeftThisTurn });
+    const slots = plan.slots;
     if (!isValidSlotPartition(botHand, slots)) {
-        throw new Error(`Bot ${bot.name} generated invalid slot partition.`);
+        throw new Error(`Bot(${difficulty}) generated invalid slot partition.`);
     }
     const resolution = resolveDiceFortsSlots(slots);
-    const buildCommands = bot.pickBuildCommands({ playerId, state, budget: resolution.buildPoints });
+    const buildCommands = plan.buildCommands;
 
     let budget = resolution.buildPoints;
     const repairUsed: Record<string, number> = {};
@@ -100,7 +124,7 @@ export function runBotTurn(match: MatchState, hand: readonly number[], rng: Dice
 
     let armColumn: number | null = null;
     if (resolution.arm.canFire) {
-        const pickedColumn = bot.pickArmColumn({ playerId, state, resolution });
+        const pickedColumn = plan.armColumn;
         if (pickedColumn !== null && pickedColumn >= 0 && pickedColumn < state.width) {
             const defId = opponentOf(playerId);
             const armOut = applyArmColumnAttack(
@@ -130,5 +154,6 @@ export function runBotTurn(match: MatchState, hand: readonly number[], rng: Dice
         buildCommands,
         armColumn,
         rerolled,
+        decisionLog: plan.log,
     };
 }

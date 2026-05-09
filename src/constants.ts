@@ -19,7 +19,7 @@ export const DICE_FORTS_BLOCK_HP = 4;
 export const DICE_FORTS_MAX_REPAIR_PER_CELL_PER_ROUND = 3;
 
 /** Минимальный max в слоте Arm для выстрела. */
-export const DICE_FORTS_ARM_THRESHOLD = 4;
+export const DICE_FORTS_ARM_THRESHOLD = 3;
 
 /** Урон = max(1, maxArm - DICE_FORTS_ARM_DAMAGE_OFFSET). */
 export const DICE_FORTS_ARM_DAMAGE_OFFSET = 3;

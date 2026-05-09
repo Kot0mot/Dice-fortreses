@@ -13,3 +13,4 @@ export * from "./telemetry.js";
 export * from "./playtestAggregate.js";
 export * from "./sim/index.js";
 export * from "./challenge/index.js";
+export * as gameV2 from "./v2/index.js";

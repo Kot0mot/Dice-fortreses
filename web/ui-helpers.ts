@@ -59,6 +59,13 @@ export function getValidNewCells(
     return cells;
 }
 
+export function getBuildTargets(
+    state: MatchState,
+    playerId: PlayerId
+): Array<{ x: number; y: number }> {
+    return getValidNewCells(state, playerId);
+}
+
 export function getValidRepairCells(
     state: MatchState,
     playerId: PlayerId,
@@ -80,6 +87,14 @@ export function getValidRepairCells(
     return cells;
 }
 
+export function getRepairTargets(
+    state: MatchState,
+    playerId: PlayerId,
+    repairUsed: Readonly<Record<string, number>>
+): Array<{ x: number; y: number }> {
+    return getValidRepairCells(state, playerId, repairUsed);
+}
+
 export function getValidArmColumns(state: MatchState, playerId: PlayerId): number[] {
     const cols: number[] = [];
     for (let x = 0; x < state.width; x++) {
@@ -88,6 +103,22 @@ export function getValidArmColumns(state: MatchState, playerId: PlayerId): numbe
         }
     }
     return cols;
+}
+
+export function getArmTargets(state: MatchState, playerId: PlayerId): number[] {
+    return getValidArmColumns(state, playerId);
+}
+
+export function canRunUiPhaseAction(
+    currentPhase: string,
+    expectedPhase: string,
+    winner: number | null,
+    isBotActing: boolean
+): boolean {
+    if (currentPhase !== expectedPhase) return false;
+    if (winner !== null) return false;
+    if (isBotActing) return false;
+    return true;
 }
 
 export function filterUiLogEntries(

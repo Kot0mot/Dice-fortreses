@@ -38,7 +38,7 @@ function meanFloor(values: readonly number[]): number {
 
 export function resolveDiceFortsSlots(slots: DiceFortsSlots): DiceFortsSlotResolution {
     const buildPoints = slots.build.reduce((a, b) => a + b, 0);
-    const fortifyCharges = meanFloor(slots.fortify);
+    const fortifyCharges = Math.max(0, meanFloor(slots.fortify) - 1);
 
     const armValues = slots.arm;
     if (armValues.length === 0) {

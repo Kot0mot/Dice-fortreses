@@ -202,7 +202,9 @@ export function applyArmColumnAttack(
         fortifyApplications.push({ chargesBefore, absorbed, chargesAfter: chargesRemaining });
         hitCount += 1;
 
-        const nextHp = cell.hp - damageRemaining;
+        const appliedDamage =
+            cell.kind === "core" && baseDamage > 0 ? Math.max(1, damageRemaining) : damageRemaining;
+        const nextHp = cell.hp - appliedDamage;
         const destroyed = nextHp <= 0;
         const hpAfter = destroyed ? 0 : nextHp;
         const targetKind: "block" | "core" = cell.kind === "core" ? "core" : "block";

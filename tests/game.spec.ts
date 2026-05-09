@@ -96,10 +96,28 @@ describe("Dice Fortresses grid / combat", () => {
         expect(afterAdvance.rerollsLeftThisTurn).toBe(DICE_FORTS_REROLLS_PER_ROUND);
     });
 
-    it("bot rerolls only when no die >= 4", () => {
-        expect(shouldBotReroll([1, 1, 2, 3], 1)).toBe(true);
+    it("bot rerolls only when no die >= arm threshold", () => {
+        expect(shouldBotReroll([1, 1, 2, 2], 1)).toBe(true);
         expect(shouldBotReroll([1, 2, 4, 1], 1)).toBe(false);
-        expect(shouldBotReroll([1, 1, 2, 3], 0)).toBe(false);
+        expect(shouldBotReroll([1, 1, 2, 2], 0)).toBe(false);
+    });
+
+    it("core hit always deals at least 1 when core is reached", () => {
+        let s = createInitialMatchState();
+        const defender = opponentOf(0);
+        s = {
+            ...s,
+            players: [
+                { ...s.players[0]!, savedFortifyCharges: 0 },
+                { ...s.players[1]!, savedFortifyCharges: 99 },
+            ],
+        };
+
+        const coreBefore = s.grid[P1_CORE_Y]![P1_CORE_X]!.hp;
+        const out = applyArmColumnAttack(s, 0, P1_CORE_X, 1, 0, s.players[defender].savedFortifyCharges);
+        const coreAfterCell = out.state.grid[P1_CORE_Y]![P1_CORE_X]!;
+        expect(coreAfterCell.kind).toBe("core");
+        expect(coreAfterCell.hp).toBe(coreBefore - 1);
     });
 
     it("pierce + fortify + core hit never gives negative hp and sets winner", () => {

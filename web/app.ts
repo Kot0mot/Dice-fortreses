@@ -20,14 +20,15 @@ import {
     validateFeedbackRating,
     type PlaytestFeedback,
 } from "../src/telemetry.js";
-import type { BotName } from "../src/sim/types.js";
 import type { DiceFortsSlotResolution } from "../src/types.js";
-import { isUiLockedForBotTurn, runBotTurn, shouldStartBotTurn, type GameMode } from "./bot-turn.js";
+import { claimBotTurnLock, isUiLockedForBotTurn, runBotTurn, type GameMode } from "./bot-turn.js";
+import type { BotDifficulty } from "./bot/types.js";
 import {
+    canRunUiPhaseAction,
     filterUiLogEntries,
-    getValidArmColumns,
-    getValidNewCells,
-    getValidRepairCells,
+    getArmTargets,
+    getBuildTargets,
+    getRepairTargets,
     parseColumn,
     slotsFromAssignments,
     type SlotName,
@@ -41,9 +42,11 @@ import {
     tutorialSkip,
     type TutorialMachineState,
 } from "./tutorial.js";
+import { RU } from "./i18n/ru.js";
+import { mountV2Sandbox } from "./v2-sandbox-ui.js";
 
 type UiPhase = "roll" | "slots" | "build" | "arm" | "end";
-type Screen = "menu" | "tutorial" | "game";
+type Screen = "menu" | "tutorial" | "game" | "v2sandbox";
 
 interface UiState {
     round: number;
@@ -53,9 +56,11 @@ interface UiState {
     slotAssignments: SlotName[];
     slotResolution: DiceFortsSlotResolution | null;
     buildBudgetLeft: number;
+    selectedBuildSpend: number;
     repairUsed: Record<string, number>;
     lastMessage: string;
     gameMode: GameMode;
+    botDifficulty: BotDifficulty;
     isBotActing: boolean;
 }
 
@@ -66,6 +71,7 @@ interface AppState {
     seed: number | null;
     soundEnabled: boolean;
     tutorialEnabled: boolean;
+    botDifficulty: BotDifficulty;
 }
 
 interface MatchStats {
@@ -75,12 +81,17 @@ interface MatchStats {
 
 const menuScreenEl = requireElement("menu-screen");
 const tutorialScreenEl = requireElement("tutorial-screen");
+const v2SandboxScreenEl = requireElement("v2-sandbox-screen");
+const v2SandboxRootEl = requireElement("v2-sandbox-root");
 const gameScreenEl = requireElement("game-screen");
 const menuModeVsBotEl = requireElement("menu-mode-vsbot");
 const menuModeHotseatEl = requireElement("menu-mode-hotseat");
 const menuHowToPlayEl = requireElement("menu-how-to-play");
+const menuV2SandboxEl = requireElement("menu-v2-sandbox");
 const menuSeedInputEl = requireInputElement("menu-seed-input");
 const menuSoundToggleEl = requireInputElement("menu-sound-toggle");
+const menuBotDifficultyRowEl = requireElement("menu-bot-difficulty-row");
+const menuBotDifficultySelectEl = requireElement("menu-bot-difficulty") as HTMLSelectElement;
 const menuStartGameEl = requireElement("menu-start-game");
 const tutorialBackEl = requireElement("tutorial-back");
 const tutorialPracticeEl = requireElement("tutorial-practice");
@@ -113,6 +124,7 @@ const DISPLAY_LOG_EVENTS = 30;
 const NOTICE_TIMEOUT_MS = 1600;
 const CELL_FLASH_TIMEOUT_MS = 1000;
 const TUTORIAL_STORAGE_KEY = "dice-fortresses.tutorial-enabled";
+const BOT_DIFFICULTY_STORAGE_KEY = "dice-fortresses.bot-difficulty";
 const isPlaytestMode = new URLSearchParams(window.location.search).get("playtest") === "1";
 const playtestSession = isPlaytestMode ? new TelemetryLiteSession(createPlaytestSessionId()) : null;
 let playtestExported = false;
@@ -128,6 +140,7 @@ let noticeTimeout: number | null = null;
 let changedCellTimeout: number | null = null;
 const changedCells = new Set<string>();
 let matchStats = createMatchStats();
+let v2SandboxUnmount: (() => void) | null = null;
 
 const initialSeed = Math.floor(Date.now());
 let runSeed = initialSeed;
@@ -139,6 +152,7 @@ const appState: AppState = {
     seed: null,
     soundEnabled: true,
     tutorialEnabled: readTutorialEnabled(),
+    botDifficulty: readBotDifficulty(),
 };
 let tutorialState: TutorialMachineState = createTutorialMachine(appState.tutorialEnabled);
 let ui: UiState = {
@@ -149,12 +163,13 @@ let ui: UiState = {
     slotAssignments: [],
     slotResolution: null,
     buildBudgetLeft: 0,
+    selectedBuildSpend: 1,
     repairUsed: {},
-    lastMessage: "Web MVP ready.",
+    lastMessage: RU.appReady,
     gameMode: appState.gameMode,
+    botDifficulty: appState.botDifficulty,
     isBotActing: false,
 };
-const BOT_PRESET: BotName = "balanced";
 const BOT_DELAY_MS = 220;
 
 setupRunControls();
@@ -192,10 +207,22 @@ function persistTutorialEnabled(enabled: boolean): void {
     window.localStorage.setItem(TUTORIAL_STORAGE_KEY, enabled ? "1" : "0");
 }
 
+function readBotDifficulty(): BotDifficulty {
+    const raw = window.localStorage.getItem(BOT_DIFFICULTY_STORAGE_KEY);
+    if (raw === "easy" || raw === "medium" || raw === "hard") {
+        return raw;
+    }
+    return "medium";
+}
+
+function persistBotDifficulty(difficulty: BotDifficulty): void {
+    window.localStorage.setItem(BOT_DIFFICULTY_STORAGE_KEY, difficulty);
+}
+
 function setupRunControls(): void {
     runControlsEl.innerHTML = "";
     const playtestToggleBtn = button(
-        isPlaytestMode ? "Disable Playtest Mode" : "Enable Playtest Mode",
+        isPlaytestMode ? RU.playtestModeOff : RU.playtestModeOn,
         () => {
             const url = new URL(window.location.href);
             if (isPlaytestMode) {
@@ -209,7 +236,7 @@ function setupRunControls(): void {
     );
     const tutorialToggleWrap = document.createElement("label");
     tutorialToggleWrap.className = "log-filter";
-    tutorialToggleWrap.textContent = "Tutorial ";
+    tutorialToggleWrap.textContent = `${RU.tutorialLabel} `;
     const tutorialToggle = document.createElement("input");
     tutorialToggle.type = "checkbox";
     tutorialToggle.checked = appState.tutorialEnabled;
@@ -227,8 +254,8 @@ function setupRunControls(): void {
     runControlsEl.append(
         playtestToggleBtn,
         tutorialToggleWrap,
-        button("Save Run", saveRunToFile, false),
-        button("Load Run", () => loadRunInputEl.click(), false)
+        button(RU.saveRun, saveRunToFile, false),
+        button(RU.loadRun, () => loadRunInputEl.click(), false)
     );
     loadRunInputEl.addEventListener("change", async () => {
         const file = loadRunInputEl.files?.[0];
@@ -237,7 +264,7 @@ function setupRunControls(): void {
             const text = await file.text();
             loadRunFromText(text);
         } catch {
-            ui.lastMessage = "Load failed: unable to read selected file.";
+            ui.lastMessage = RU.loadFailedRead;
             render();
         } finally {
             loadRunInputEl.value = "";
@@ -258,6 +285,10 @@ function setupMenuControls(): void {
     });
     menuHowToPlayEl.addEventListener("click", () => {
         appState.screen = "tutorial";
+        syncScreenVisibility();
+    });
+    menuV2SandboxEl.addEventListener("click", () => {
+        appState.screen = "v2sandbox";
         syncScreenVisibility();
     });
     tutorialBackEl.addEventListener("click", () => {
@@ -282,12 +313,21 @@ function setupMenuControls(): void {
     menuSoundToggleEl.addEventListener("change", () => {
         appState.soundEnabled = menuSoundToggleEl.checked;
     });
+    menuBotDifficultySelectEl.value = appState.botDifficulty;
+    menuBotDifficultySelectEl.addEventListener("change", () => {
+        const value = menuBotDifficultySelectEl.value;
+        if (value === "easy" || value === "medium" || value === "hard") {
+            appState.botDifficulty = value;
+            persistBotDifficulty(value);
+            updateMenuSelection();
+        }
+    });
     menuStartGameEl.addEventListener("click", () => {
         if (!appState.isModeSelected) return;
         startNewGame();
     });
     backToMenuEl.addEventListener("click", () => {
-        if (!window.confirm("Return to menu? Current match progress will be lost.")) return;
+        if (!window.confirm(RU.confirmBackToMenu)) return;
         appState.screen = "menu";
         ui.isBotActing = false;
         hideEndgameOverlay();
@@ -308,13 +348,34 @@ function setupMenuControls(): void {
 function updateMenuSelection(): void {
     menuModeVsBotEl.classList.toggle("selected", appState.isModeSelected && appState.gameMode === "vsBot");
     menuModeHotseatEl.classList.toggle("selected", appState.isModeSelected && appState.gameMode === "hotseat");
+    menuBotDifficultyRowEl.toggleAttribute("hidden", appState.gameMode !== "vsBot");
+    menuBotDifficultySelectEl.disabled = appState.gameMode !== "vsBot";
     menuStartGameEl.toggleAttribute("disabled", !appState.isModeSelected);
 }
 
 function syncScreenVisibility(): void {
     menuScreenEl.classList.toggle("hidden", appState.screen !== "menu");
     tutorialScreenEl.classList.toggle("hidden", appState.screen !== "tutorial");
+    v2SandboxScreenEl.classList.toggle("hidden", appState.screen !== "v2sandbox");
     gameScreenEl.classList.toggle("hidden", appState.screen !== "game");
+
+    if (appState.screen === "v2sandbox") {
+        v2SandboxUnmount?.();
+        const chosenSeed = appState.seed ?? Math.floor(Date.now());
+        v2SandboxUnmount = mountV2Sandbox(v2SandboxRootEl, {
+            seed: chosenSeed,
+            onBack: () => {
+                v2SandboxUnmount?.();
+                v2SandboxUnmount = null;
+                appState.screen = "menu";
+                syncScreenVisibility();
+            },
+        });
+    } else {
+        v2SandboxUnmount?.();
+        v2SandboxUnmount = null;
+    }
+
     if (appState.screen === "game") {
         render();
     }
@@ -335,9 +396,11 @@ function startNewGame(): void {
         slotAssignments: [],
         slotResolution: null,
         buildBudgetLeft: 0,
+        selectedBuildSpend: 1,
         repairUsed: {},
-        lastMessage: `New match started. Seed=${chosenSeed}`,
+        lastMessage: RU.newMatchStarted(chosenSeed),
         gameMode: appState.gameMode,
+        botDifficulty: appState.botDifficulty,
         isBotActing: false,
     };
     tutorialState = createTutorialMachine(appState.tutorialEnabled);
@@ -362,10 +425,10 @@ function setupLogControls(): void {
             uiLogFilters[category] = input.checked;
             renderLogPanel();
         });
-        label.append(input, document.createTextNode(category));
+        label.append(input, document.createTextNode(RU.logCategory(category)));
         filterWrap.appendChild(label);
     }
-    const clearBtn = button("Clear log", () => {
+    const clearBtn = button(RU.logClear, () => {
         uiLogEntries = [];
         renderLogPanel();
     }, false);
@@ -412,7 +475,7 @@ function saveRunToFile(): void {
     a.download = `dice-fortresses-run-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    ui.lastMessage = "Run saved to JSON file.";
+    ui.lastMessage = RU.runSaved;
     addUiLog("system", ui.lastMessage);
     render();
 }
@@ -431,16 +494,18 @@ function loadRunFromText(raw: string): void {
             slotAssignments: [...saved.uiState.slotAssignments],
             slotResolution: saved.uiState.slotResolution ? { ...saved.uiState.slotResolution } : null,
             buildBudgetLeft: saved.uiState.buildBudgetLeft,
+            selectedBuildSpend: 1,
             repairUsed: { ...saved.uiState.repairUsed },
-            lastMessage: saved.uiState.lastMessage || "Run loaded.",
+            lastMessage: saved.uiState.lastMessage || RU.runLoaded,
             gameMode: saved.uiState.gameMode ?? "hotseat",
+            botDifficulty: appState.botDifficulty,
             isBotActing: false,
         };
         matchStats = createMatchStats();
-        ui.lastMessage = `Run loaded (format ${saved.formatVersion}). Continue from phase "${ui.phase}".`;
+        ui.lastMessage = RU.runLoadedFormat(saved.formatVersion, ui.phase);
         addUiLog("system", ui.lastMessage);
     } catch (error) {
-        ui.lastMessage = error instanceof Error ? `Load failed: ${error.message}` : "Load failed: unknown error.";
+        ui.lastMessage = error instanceof Error ? RU.loadFailed(error.message) : RU.loadFailedUnknown;
         addUiLog("system", ui.lastMessage);
     }
     render();
@@ -464,9 +529,10 @@ function startTurn(): void {
     ui.slotAssignments = ui.hand.map(() => "build");
     ui.slotResolution = null;
     ui.buildBudgetLeft = 0;
+    ui.selectedBuildSpend = 1;
     ui.repairUsed = {};
     ui.isBotActing = false;
-    ui.lastMessage = `Player ${ui.match.currentPlayer} rolled [${ui.hand.join(", ")}]`;
+    ui.lastMessage = RU.playerRolled(ui.match.currentPlayer, ui.hand);
     addUiLog("dice", ui.lastMessage);
     playtestSession?.turnStarted(ui.round, ui.match.currentPlayer, coreHp(ui.match, 0), coreHp(ui.match, 1));
     render();
@@ -474,16 +540,16 @@ function startTurn(): void {
 }
 
 function canInteract(phase: UiPhase): boolean {
-    return ui.phase === phase && ui.match.winner === null && !isUiLockedForBotTurn(ui.isBotActing);
+    return canRunUiPhaseAction(ui.phase, phase, ui.match.winner, isUiLockedForBotTurn(ui.isBotActing));
 }
 
 function maybeTriggerBotTurn(): void {
-    if (!shouldStartBotTurn(ui.gameMode, ui.match.currentPlayer, ui.isBotActing, ui.match.winner)) {
+    if (!claimBotTurnLock(ui.gameMode, ui.match.currentPlayer, ui.isBotActing, ui.match.winner)) {
         return;
     }
     ui.isBotActing = true;
-    ui.lastMessage = "Bot is thinking...";
-    addUiLog("system", "Bot turn started");
+    ui.lastMessage = RU.botThinkingDifficulty(ui.botDifficulty);
+    addUiLog("system", RU.botTurnStarted);
     render();
     window.setTimeout(() => {
         if (ui.match.winner !== null || ui.gameMode !== "vsBot" || ui.match.currentPlayer !== 1) {
@@ -494,11 +560,12 @@ function maybeTriggerBotTurn(): void {
         try {
             const endingPlayer = ui.match.currentPlayer;
             const coreBeforeP0 = coreHp(ui.match, 0);
-            const botTurn = runBotTurn(ui.match, ui.hand, rng, BOT_PRESET);
+            const botTurn = runBotTurn(ui.match, ui.hand, rng, ui.botDifficulty);
             ui.hand = botTurn.hand;
             ui.slotAssignments = botTurn.slotAssignments;
             ui.slotResolution = botTurn.resolution;
             ui.buildBudgetLeft = 0;
+            ui.selectedBuildSpend = 1;
             ui.repairUsed = {};
             ui.match = botTurn.state;
             matchStats.coreDamageByPlayer[1] += Math.max(0, coreBeforeP0 - coreHp(ui.match, 0));
@@ -506,25 +573,29 @@ function maybeTriggerBotTurn(): void {
                 matchStats.rerollsUsedByPlayer[1] += 1;
             }
             playtestSession?.turnEnded(ui.round, endingPlayer, coreHp(ui.match, 0), coreHp(ui.match, 1));
-            addUiLog("dice", botTurn.rerolled ? "Bot reroll/keep: reroll" : "Bot reroll/keep: keep");
+            addUiLog("dice", RU.botRerollKeep(botTurn.rerolled));
+            addUiLog("dice", RU.botDecisionReason("Reroll", botTurn.decisionLog.reroll));
             addUiLog(
                 "system",
-                `Bot slots: B[${botTurn.slots.build.join(",")}], F[${botTurn.slots.fortify.join(",")}], A[${botTurn.slots.arm.join(",")}]`
+                RU.botSlots(botTurn.slots.build, botTurn.slots.fortify, botTurn.slots.arm)
             );
+            addUiLog("system", RU.botDecisionReason("Slots", botTurn.decisionLog.slots));
             addUiLog(
                 "build",
-                `Bot build ops: ${
+                RU.botBuildOps(
                     botTurn.buildCommands.length > 0
                         ? botTurn.buildCommands.map((cmd) => `${cmd.type}@(${cmd.x},${cmd.y})/${cmd.spend}`).join("; ")
-                        : "none"
-                }`
+                        : RU.none
+                )
             );
-            addUiLog("combat", `Bot arm column: ${botTurn.armColumn === null ? "skip" : botTurn.armColumn}`);
-            addUiLog("system", "Bot turn ended");
+            addUiLog("build", RU.botDecisionReason("Build", botTurn.decisionLog.build));
+            addUiLog("combat", RU.botArmColumn(botTurn.armColumn));
+            addUiLog("combat", RU.botDecisionReason("Arm", botTurn.decisionLog.arm));
+            addUiLog("system", RU.botTurnEnded);
             ui.isBotActing = false;
             if (ui.match.winner !== null) {
                 playtestSession?.matchEnded(ui.round, ui.match.winner);
-                ui.lastMessage = `Winner: Player ${ui.match.winner}`;
+                ui.lastMessage = RU.winner(ui.match.winner);
                 maybeCompletePlaytest();
                 showEndgameOverlay();
                 render();
@@ -534,7 +605,7 @@ function maybeTriggerBotTurn(): void {
             startTurn();
         } catch (error) {
             ui.isBotActing = false;
-            ui.lastMessage = error instanceof Error ? `Bot turn failed: ${error.message}` : "Bot turn failed.";
+            ui.lastMessage = error instanceof Error ? RU.botTurnFailed(error.message) : RU.botTurnFailed();
             addUiLog("system", ui.lastMessage);
             render();
         }
@@ -545,16 +616,16 @@ function applyReroll(): void {
     if (!canInteract("roll")) return;
     const out = applyHandReroll(ui.match, rng);
     if (!out) {
-        ui.lastMessage = "No rerolls left this turn.";
+        ui.lastMessage = RU.noRerollsLeft;
         render();
         return;
     }
     ui.match = out.state;
     ui.hand = out.hand;
     ui.slotAssignments = ui.hand.map(() => "build");
-    ui.lastMessage = `Rerolled: [${ui.hand.join(", ")}]`;
+    ui.lastMessage = RU.rerolled(ui.hand);
     matchStats.rerollsUsedByPlayer[ui.match.currentPlayer] += 1;
-    showNotice("Reroll использован");
+    showNotice(RU.rerollUsedNotice);
     playtestSession?.rerollUsed(ui.round, ui.match.currentPlayer);
     addUiLog("dice", ui.lastMessage);
     render();
@@ -563,7 +634,7 @@ function applyReroll(): void {
 function keepHandAndGoSlots(): void {
     if (!canInteract("roll")) return;
     ui.phase = "slots";
-    ui.lastMessage = "Assign each die into Build/Fortify/Arm and commit.";
+    ui.lastMessage = RU.assignSlotsHint;
     render();
 }
 
@@ -593,9 +664,10 @@ function commitSlots(): void {
     );
     ui.slotResolution = res;
     ui.buildBudgetLeft = res.buildPoints;
+    ui.selectedBuildSpend = 1;
     ui.repairUsed = {};
     ui.phase = "build";
-    ui.lastMessage = `Slots committed. Build=${res.buildPoints}, Fortify=${res.fortifyCharges}, Arm damage=${res.arm.damage}.`;
+    ui.lastMessage = RU.slotCommitSummary(res);
     addUiLog("system", ui.lastMessage);
     render();
 }
@@ -613,7 +685,7 @@ function applyBuild(cmd: BuildCommand): void {
 
     const out = applyBuildCommand(ui.match, pid, cmd, ui.buildBudgetLeft, ui.repairUsed);
     if (!out) {
-        ui.lastMessage = "Не удалось применить Build-команду. Попробуй другой ход.";
+        ui.lastMessage = RU.buildApplyFailed;
         render();
         return;
     }
@@ -622,17 +694,38 @@ function applyBuild(cmd: BuildCommand): void {
     ui.match = out.state;
     markChangedCells(cellsChangedBetween(previousState, out.state));
     ui.buildBudgetLeft = out.budget;
-    ui.lastMessage = `Build applied: ${cmd.type} at (${cmd.x},${cmd.y}) spend ${cmd.spend}.`;
-    showNotice("Build применен");
+    ui.lastMessage = RU.buildApplied(cmd.type, cmd.x, cmd.y, cmd.spend);
+    showNotice(RU.buildAppliedNotice);
     playtestSession?.buildAction(ui.round, ui.match.currentPlayer, cmd.type, cmd.spend);
     addUiLog("build", ui.lastMessage);
     render();
 }
 
+function handleBuildBoardClick(x: number, y: number): void {
+    if (!canInteract("build")) return;
+    if (ui.buildBudgetLeft <= 0) {
+        ui.lastMessage = "Build: бюджет на ход уже исчерпан. Нажмите «Завершить Build».";
+        render();
+        return;
+    }
+    const playerId = ui.match.currentPlayer;
+    const key = `${x},${y}`;
+    const canNew = new Set(getBuildTargets(ui.match, playerId).map((cell) => `${cell.x},${cell.y}`)).has(key);
+    const canRepair = new Set(getRepairTargets(ui.match, playerId, ui.repairUsed).map((cell) => `${cell.x},${cell.y}`)).has(key);
+    if (!canNew && !canRepair) {
+        ui.lastMessage = "Эта клетка сейчас не подходит ни для постройки, ни для ремонта.";
+        render();
+        return;
+    }
+    const type: BuildCommand["type"] = canNew ? "new" : "repair";
+    const spend = Math.max(1, Math.min(ui.selectedBuildSpend, ui.buildBudgetLeft));
+    applyBuild({ type, x, y, spend });
+}
+
 function doneBuild(): void {
     if (!canInteract("build")) return;
     ui.phase = "arm";
-    ui.lastMessage = "Choose a column to fire or skip attack.";
+    ui.lastMessage = RU.goToArm;
     render();
 }
 
@@ -640,7 +733,7 @@ function fireArm(column: number): void {
     if (!canInteract("arm")) return;
     if (!ui.slotResolution) return;
     if (!ui.slotResolution.arm.canFire) {
-        ui.lastMessage = `Arm не может стрелять: ${armFailureReason(ui.slotResolution.arm)} Попробуй Skip.`;
+        ui.lastMessage = RU.armBlocked(armFailureReason(ui.slotResolution.arm));
         render();
         return;
     }
@@ -660,7 +753,7 @@ function fireArm(column: number): void {
     ui.match = patchPlayerSecrets(ui.match, defId, { savedFortifyCharges: out.chargesRemaining });
     ui.phase = "end";
     playtestSession?.armAction(ui.round, ui.match.currentPlayer, false, column);
-    ui.lastMessage = `Arm fired at x=${column}. Hits=${out.targetsHit.length}.`;
+    ui.lastMessage = RU.armFired(column, out.targetsHit.length);
     addUiLog("combat", ui.lastMessage);
     let showedFortifyNotice = false;
     let showedCoreHitNotice = false;
@@ -668,24 +761,24 @@ function fireArm(column: number): void {
         const fortify = out.fortifyApplications[idx];
         if (fortify && fortify.absorbed > 0) {
             if (!showedFortifyNotice) {
-                showNotice("Fortify поглотил урон");
+                showNotice(RU.fortifyAbsorbedNotice);
                 showedFortifyNotice = true;
             }
             addUiLog(
                 "combat",
-                `Fortify absorbed ${fortify.absorbed} damage at (${target.x},${target.y}); charges ${fortify.chargesBefore}->${fortify.chargesAfter}.`
+                RU.fortifyAbsorbedLog(fortify.absorbed, target.x, target.y, fortify.chargesBefore, fortify.chargesAfter)
             );
         }
         if (target.kind === "core") {
             const dealt = Math.max(0, target.hpBefore - target.hpAfter);
             matchStats.coreDamageByPlayer[pid] += dealt;
             if (!showedCoreHitNotice) {
-                showNotice("Попадание по ядру");
+                showNotice(RU.coreHitNotice);
                 showedCoreHitNotice = true;
             }
-            addUiLog("combat", `Core hit at (${target.x},${target.y}): ${target.hpBefore}->${target.hpAfter}.`);
+            addUiLog("combat", RU.coreHitLog(target.x, target.y, target.hpBefore, target.hpAfter));
         } else {
-            addUiLog("combat", `Block hit at (${target.x},${target.y}): ${target.hpBefore}->${target.hpAfter}.`);
+            addUiLog("combat", RU.blockHitLog(target.x, target.y, target.hpBefore, target.hpAfter));
         }
     });
     render();
@@ -694,7 +787,7 @@ function fireArm(column: number): void {
 function skipArm(): void {
     if (!canInteract("arm")) return;
     ui.phase = "end";
-    ui.lastMessage = "Arm skipped.";
+    ui.lastMessage = RU.armSkipped;
     playtestSession?.armAction(ui.round, ui.match.currentPlayer, true, null);
     addUiLog("combat", ui.lastMessage);
     render();
@@ -705,12 +798,12 @@ function endTurn(): void {
     const endingPlayer = ui.match.currentPlayer;
     if (ui.slotResolution) {
         ui.match = endTurnUpdateFortify(ui.match, ui.match.currentPlayer, ui.slotResolution.fortifyCharges);
-        addUiLog("system", `End turn: stored fortify=${ui.slotResolution.fortifyCharges} for player ${ui.match.currentPlayer}.`);
+        addUiLog("system", RU.endTurnStoredFortify(ui.slotResolution.fortifyCharges, ui.match.currentPlayer));
     }
     if (ui.match.winner !== null) {
         playtestSession?.turnEnded(ui.round, ui.match.currentPlayer, coreHp(ui.match, 0), coreHp(ui.match, 1));
         playtestSession?.matchEnded(ui.round, ui.match.winner);
-        ui.lastMessage = `Winner: Player ${ui.match.winner}`;
+        ui.lastMessage = RU.winner(ui.match.winner);
         addUiLog("system", ui.lastMessage);
         maybeCompletePlaytest();
         showEndgameOverlay();
@@ -736,9 +829,9 @@ function render(): void {
 }
 
 function renderTopBar(): void {
-    topBarModeEl.textContent = `Mode: ${ui.gameMode === "vsBot" ? "Play vs Bot" : "Hot-seat (2 players)"}`;
-    topBarRoundEl.textContent = `Round: ${ui.round}`;
-    topBarPlayerEl.textContent = `Active: Player ${ui.match.currentPlayer}`;
+    topBarModeEl.textContent = RU.modeLabel(ui.gameMode);
+    topBarRoundEl.textContent = RU.roundLabel(ui.round);
+    topBarPlayerEl.textContent = RU.activePlayerLabel(ui.match.currentPlayer);
 }
 
 function renderLogPanel(): void {
@@ -748,13 +841,13 @@ function renderLogPanel(): void {
     if (entries.length === 0) {
         const empty = document.createElement("div");
         empty.className = "muted";
-        empty.textContent = uiLogEntries.length === 0 ? "Ходов пока нет." : "Нет записей для выбранных фильтров.";
+        empty.textContent = uiLogEntries.length === 0 ? RU.emptyLog : RU.emptyFilteredLog;
         logListEl.appendChild(empty);
     } else {
         entries.forEach((entry) => {
             const row = document.createElement("div");
             row.className = `log-entry log-${entry.category}`;
-            row.textContent = `T${entry.turn} P${entry.playerId} [${entry.category}] ${entry.message}`;
+            row.textContent = `T${entry.turn} И${entry.playerId} [${RU.logCategory(entry.category)}] ${entry.message}`;
             logListEl.appendChild(row);
         });
     }
@@ -765,28 +858,28 @@ function renderStatus(): void {
     statusEl.innerHTML = "";
     const p = document.createElement("div");
     p.innerHTML = `
-        <div>Round: <strong>${ui.round}</strong></div>
-        <div>Active Player: <strong>${ui.match.currentPlayer}</strong></div>
-        <div>Core HP P0/P1: <strong>${coreHp(ui.match, 0)} / ${coreHp(ui.match, 1)}</strong></div>
-        <div>Fortify charges P0/P1: <strong>${ui.match.players[0]!.savedFortifyCharges} / ${ui.match.players[1]!.savedFortifyCharges}</strong></div>
-        <div>Phase: <strong>${ui.phase}</strong></div>
-        <div>Mode: <strong>${ui.gameMode === "vsBot" ? "Vs Bot" : "Hot-seat"}</strong></div>
-        <div>Current step: <strong>${currentPhaseHint()}</strong></div>
-        <div class="muted">Rerolls left: ${ui.match.rerollsLeftThisTurn}</div>
-        ${ui.isBotActing ? '<div class="muted">Bot is thinking...</div>' : ""}
+        <div>${RU.statusRound}: <strong>${ui.round}</strong></div>
+        <div>${RU.statusActivePlayer}: <strong>${ui.match.currentPlayer}</strong></div>
+        <div>${RU.statusCoreHp}: <strong>${coreHp(ui.match, 0)} / ${coreHp(ui.match, 1)}</strong></div>
+        <div>${RU.statusFortify}: <strong>${ui.match.players[0]!.savedFortifyCharges} / ${ui.match.players[1]!.savedFortifyCharges}</strong></div>
+        <div>${RU.statusPhase}: <strong>${ui.phase}</strong></div>
+        <div>${RU.statusMode}: <strong>${ui.gameMode === "vsBot" ? RU.modeVsBot : RU.modeHotseat}</strong></div>
+        <div>${RU.statusCurrentStep}: <strong>${currentPhaseHint()}</strong></div>
+        <div class="muted">${RU.statusRerollsLeft(ui.match.rerollsLeftThisTurn)}</div>
+        ${ui.isBotActing ? `<div class="muted">${RU.botThinkingDifficulty(ui.botDifficulty)}</div>` : ""}
     `;
     statusEl.appendChild(p);
-    nextActionEl.innerHTML = `<strong>Next action:</strong> ${nextActionHint()}`;
+    nextActionEl.innerHTML = `<strong>${RU.nextActionLabel}</strong> ${nextActionHint()}<br><span class="muted">${phaseWhyHint()}</span>`;
 }
 
 function renderRollPanel(): void {
     rollPanelEl.innerHTML = "";
     const hand = document.createElement("div");
-    hand.textContent = `Hand: [${ui.hand.join(", ")}]`;
+    hand.textContent = RU.handLabel(ui.hand);
     rollPanelEl.appendChild(hand);
 
-    const rerollBtn = button("Reroll", applyReroll, !canInteract("roll") || ui.match.rerollsLeftThisTurn <= 0, "Reroll dice hand");
-    const keepBtn = button("Keep Hand", keepHandAndGoSlots, !canInteract("roll"), "Keep current hand and continue");
+    const rerollBtn = button(RU.rerollButton, applyReroll, !canInteract("roll") || ui.match.rerollsLeftThisTurn <= 0, RU.rerollButton);
+    const keepBtn = button(RU.keepHandButton, keepHandAndGoSlots, !canInteract("roll"), RU.keepHandButton);
     rollPanelEl.append(rerollBtn, keepBtn);
 }
 
@@ -795,17 +888,18 @@ function renderSlotsPanel(): void {
     if (ui.hand.length === 0) return;
     const slotTips = document.createElement("div");
     slotTips.className = "panel-note muted";
-    slotTips.textContent = "Fortify: Поглощает урон при входящей атаке.";
+    slotTips.textContent =
+        "Fortify (щит): эффективные щиты за ход считаются как floor(среднее)-1 (не ниже 0), поэтому защита стала мягче. Arm (атака): выстрел доступен уже при max=3+, так что матч идет динамичнее.";
     slotsPanelEl.appendChild(slotTips);
 
     ui.hand.forEach((die, idx) => {
         const row = document.createElement("div");
-        row.textContent = `Die #${idx + 1} (${die}) `;
+        row.textContent = `Кубик #${idx + 1} (${die}) `;
         const select = document.createElement("select");
         for (const slot of ["build", "fortify", "arm"] as const) {
             const option = document.createElement("option");
             option.value = slot;
-            option.textContent = slot;
+            option.textContent = slot === "build" ? "Build (стройка)" : slot === "fortify" ? "Fortify (щит)" : "Arm (атака)";
             option.selected = ui.slotAssignments[idx] === slot;
             select.appendChild(option);
         }
@@ -817,47 +911,74 @@ function renderSlotsPanel(): void {
         slotsPanelEl.appendChild(row);
     });
 
-    slotsPanelEl.appendChild(button("Commit Slots", commitSlots, !canInteract("slots"), "Commit selected slots"));
+    slotsPanelEl.appendChild(button(RU.commitSlotsButton, commitSlots, !canInteract("slots"), RU.commitSlotsButton));
 }
 
 function renderBuildPanel(): void {
     buildPanelEl.innerHTML = "";
     const budget = document.createElement("div");
-    budget.textContent = `Build budget left: ${ui.buildBudgetLeft}`;
+    budget.textContent = RU.buildBudget(ui.buildBudgetLeft);
     buildPanelEl.appendChild(budget);
     const buildTip = document.createElement("div");
     buildTip.className = "panel-note muted";
-    buildTip.textContent = "Строй рядом со своими блоками/ядром.";
+    buildTip.textContent = "Выберите, где строить или чинить. Строить можно рядом со своими блоками или ядром.";
     buildPanelEl.appendChild(buildTip);
     const playerId = ui.match.currentPlayer;
     const hasBuildTargets =
-        getValidNewCells(ui.match, playerId).length > 0 || getValidRepairCells(ui.match, playerId, ui.repairUsed).length > 0;
+        getBuildTargets(ui.match, playerId).length > 0 || getRepairTargets(ui.match, playerId, ui.repairUsed).length > 0;
     if (ui.phase === "build" && !hasBuildTargets) {
         const emptyState = document.createElement("div");
         emptyState.className = "muted panel-note";
-        emptyState.textContent = "Нельзя строить, попробуй repair или done.";
+        emptyState.textContent = "Сейчас нет доступных целей для строительства или ремонта. Можно завершить фазу.";
         buildPanelEl.appendChild(emptyState);
     }
-
+    const spendWrap = document.createElement("div");
+    spendWrap.className = "panel-note";
+    spendWrap.textContent = "Расход Build за клик:";
+    for (const spend of [1, 2, 3, 4]) {
+        const spendBtn = button(
+            `+${spend}`,
+            () => {
+                ui.selectedBuildSpend = spend;
+                renderBuildPanel();
+            },
+            !canInteract("build") || ui.buildBudgetLeft <= 0
+        );
+        if (ui.selectedBuildSpend === spend) {
+            spendBtn.classList.add("selected");
+        }
+        spendWrap.appendChild(spendBtn);
+    }
+    buildPanelEl.appendChild(spendWrap);
+    const clickTip = document.createElement("div");
+    clickTip.className = "panel-note muted";
+    clickTip.textContent = "Клик по подсвеченной клетке: пустая = новый блок, своя поврежденная = ремонт.";
+    buildPanelEl.appendChild(clickTip);
+    const doneBtn = button(RU.doneBuildButton, doneBuild, !canInteract("build"), RU.doneBuildButton);
+    buildPanelEl.append(doneBtn);
+    const advanced = document.createElement("details");
+    advanced.className = "panel-note";
+    const summary = document.createElement("summary");
+    summary.textContent = "Advanced: ручной ввод координат (debug)";
+    advanced.appendChild(summary);
     const typeInput = document.createElement("select");
     ["new", "repair"].forEach((value) => {
         const option = document.createElement("option");
         option.value = value;
-        option.textContent = value;
+        option.textContent = value === "new" ? "new (новый блок)" : "repair (ремонт)";
         typeInput.appendChild(option);
     });
     const xInput = numericInput("x");
     const yInput = numericInput("y");
-    const spendInput = numericInput("spend");
-
+    const spendInput = numericInput("очки");
     const applyBtn = button(
-        "Apply Build",
+        RU.applyBuildButton,
         () => {
             const x = Number(xInput.value);
             const y = Number(yInput.value);
             const spend = Number(spendInput.value);
             if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(spend)) {
-                ui.lastMessage = "Build requires integer x, y, spend.";
+                ui.lastMessage = RU.buildRequiresIntegers;
                 render();
                 return;
             }
@@ -865,39 +986,50 @@ function renderBuildPanel(): void {
         },
         !canInteract("build")
     );
-
-    const doneBtn = button("Done Build", doneBuild, !canInteract("build"), "Finish build phase");
-
-    buildPanelEl.append(typeInput, xInput, yInput, spendInput, applyBtn, doneBtn);
+    advanced.append(typeInput, xInput, yInput, spendInput, applyBtn);
+    buildPanelEl.appendChild(advanced);
 }
 
 function renderArmPanel(): void {
     armPanelEl.innerHTML = "";
     const armInfo = document.createElement("div");
     const arm = ui.slotResolution?.arm;
-    const armColumns = arm?.canFire ? getValidArmColumns(ui.match, ui.match.currentPlayer) : [];
+    const armColumns = arm?.canFire ? getArmTargets(ui.match, ui.match.currentPlayer) : [];
     armInfo.textContent = arm
-        ? `Arm max=${arm.max} canFire=${arm.canFire} damage=${arm.damage} pierce=${arm.pierceDepth}`
-        : "Arm unavailable before slots commit.";
+        ? `Arm: max=${arm.max}, выстрел=${arm.canFire ? "да" : "нет"}, урон=${arm.damage}, пробитие=${arm.pierceDepth}`
+        : RU.armUnavailable;
     armPanelEl.appendChild(armInfo);
     const armTip = document.createElement("div");
     armTip.className = "panel-note muted";
-    armTip.textContent = "Выбери колонку для атаки.";
+    armTip.textContent =
+        "Arm (атака): выберите колонку для удара. Выстрел доступен при max=3+, а если попадание дошло до ядра, оно нанесет минимум 1 урона.";
     armPanelEl.appendChild(armTip);
     if (ui.phase === "arm" && (!arm?.canFire || armColumns.length === 0)) {
         const armReason = document.createElement("div");
         armReason.className = "muted panel-note";
-        armReason.textContent = `Arm не может стрелять: ${armFailureReason(arm)} Попробуй Skip.`;
+        armReason.textContent = RU.armBlocked(armFailureReason(arm));
         armPanelEl.appendChild(armReason);
     }
 
-    const xInput = numericInput("column x");
+    const clickHint = document.createElement("div");
+    clickHint.className = "panel-note muted";
+    clickHint.textContent = "Клик по подсвеченной колонке или вражеской клетке в колонке запускает выстрел.";
+    armPanelEl.appendChild(clickHint);
+    const skipBtn = button(RU.skipButton, skipArm, !canInteract("arm"), RU.skipButton);
+    const endBtn = button(RU.endTurnButton, endTurn, !canInteract("end"), RU.endTurnButton);
+    armPanelEl.append(skipBtn, endBtn);
+    const advanced = document.createElement("details");
+    advanced.className = "panel-note";
+    const summary = document.createElement("summary");
+    summary.textContent = "Advanced: ручной выбор колонки (debug)";
+    advanced.appendChild(summary);
+    const xInput = numericInput("колонка x");
     const fireBtn = button(
-        "Fire",
+        RU.fireButton,
         () => {
             const col = parseColumn(xInput.value, ui.match.width);
             if (col === null) {
-                ui.lastMessage = `Выбери целую колонку от 0 до ${ui.match.width - 1}.`;
+                ui.lastMessage = RU.chooseIntegerColumn(ui.match.width - 1);
                 playtestSession?.playerError(ui.round, ui.match.currentPlayer, "invalid_arm_column");
                 render();
                 return;
@@ -905,23 +1037,20 @@ function renderArmPanel(): void {
             fireArm(col);
         },
         !canInteract("arm") || !arm?.canFire,
-        "Fire selected column"
+        RU.fireButton
     );
-    const skipBtn = button("Skip", skipArm, !canInteract("arm"), "Skip arm attack");
-    const endBtn = button("End Turn", endTurn, !canInteract("end"), "End current turn");
-    armPanelEl.append(xInput, fireBtn, skipBtn, endBtn);
+    advanced.append(xInput, fireBtn);
+    armPanelEl.appendChild(advanced);
 }
 
 function renderBoard(): void {
     boardEl.innerHTML = "";
     const playerId = ui.match.currentPlayer;
-    const newHints = new Set(getValidNewCells(ui.match, playerId).map((cell) => `${cell.x},${cell.y}`));
-    const repairHints = new Set(
-        getValidRepairCells(ui.match, playerId, ui.repairUsed).map((cell) => `${cell.x},${cell.y}`)
-    );
+    const newHints = new Set(getBuildTargets(ui.match, playerId).map((cell) => `${cell.x},${cell.y}`));
+    const repairHints = new Set(getRepairTargets(ui.match, playerId, ui.repairUsed).map((cell) => `${cell.x},${cell.y}`));
     const armHints =
         ui.phase === "arm" && ui.slotResolution?.arm.canFire
-            ? new Set(getValidArmColumns(ui.match, playerId))
+            ? new Set(getArmTargets(ui.match, playerId))
             : new Set<number>();
 
     for (let x = 0; x < ui.match.width; x++) {
@@ -929,6 +1058,11 @@ function renderBoard(): void {
         header.className = "col-header";
         if (armHints.has(x)) {
             header.classList.add("hint-arm-col");
+        }
+        if (canInteract("arm") && armHints.has(x)) {
+            header.classList.add("clickable-target");
+            header.title = `Клик: атаковать колонку ${x}`;
+            header.addEventListener("click", () => fireArm(x));
         }
         header.textContent = String(x);
         boardEl.appendChild(header);
@@ -955,22 +1089,33 @@ function renderBoard(): void {
             if (ui.phase === "build" && repairHints.has(key)) {
                 cell.classList.add("hint-repair");
             }
+            if (canInteract("build") && (newHints.has(key) || repairHints.has(key))) {
+                cell.classList.add("clickable-target");
+            }
+            if (canInteract("arm") && armHints.has(x)) {
+                cell.classList.add("clickable-target");
+            }
             if (changedCells.has(key)) {
                 cell.classList.add("cell-flash");
             }
             cell.title = `(${x},${y})`;
+            if (ui.phase === "build") {
+                cell.addEventListener("click", () => handleBuildBoardClick(x, y));
+            } else if (ui.phase === "arm" && armHints.has(x)) {
+                cell.addEventListener("click", () => fireArm(x));
+            }
             boardEl.appendChild(cell);
         }
     }
     boardLegendEl.innerHTML = `
-        <span class="legend-chip legend-empty">· Empty cell</span>
-        <span class="legend-chip legend-block-p0">B0 Player 0 block</span>
-        <span class="legend-chip legend-block-p1">B1 Player 1 block</span>
-        <span class="legend-chip legend-core-p0">C0 Player 0 core</span>
-        <span class="legend-chip legend-core-p1">C1 Player 1 core</span>
-        <span class="legend-chip legend-new">Build: new cell</span>
-        <span class="legend-chip legend-repair">Build: repair target</span>
-        <span class="legend-chip legend-arm">Arm: fireable column</span>
+        <span class="legend-chip legend-empty">${RU.legendEmpty}</span>
+        <span class="legend-chip legend-block-p0">${RU.legendBlockP0}</span>
+        <span class="legend-chip legend-block-p1">${RU.legendBlockP1}</span>
+        <span class="legend-chip legend-core-p0">${RU.legendCoreP0}</span>
+        <span class="legend-chip legend-core-p1">${RU.legendCoreP1}</span>
+        <span class="legend-chip legend-new">${RU.legendBuildNew}</span>
+        <span class="legend-chip legend-repair">${RU.legendBuildRepair}</span>
+        <span class="legend-chip legend-arm">${RU.legendArmColumn}</span>
     `;
 }
 
@@ -983,70 +1128,87 @@ function createMatchStats(): MatchStats {
 
 function currentPhaseHint(): string {
     if (ui.isBotActing) {
-        return "Bot resolves this turn automatically.";
+        return RU.phaseBot;
     }
     switch (ui.phase) {
         case "roll":
-            return "Decide whether to reroll, then keep the hand.";
+            return RU.phaseRoll;
         case "slots":
-            return "Assign each die into Build, Fortify, or Arm.";
+            return RU.phaseSlots;
         case "build":
-            return "Spend Build points or finish build step.";
+            return RU.phaseBuild;
         case "arm":
-            return "Choose a column to fire or skip the attack.";
+            return RU.phaseArm;
         case "end":
-            return "Confirm end turn to store Fortify charges.";
+            return RU.phaseEnd;
         default:
-            return "Follow the active phase actions.";
+            return RU.phaseDefault;
     }
 }
 
 function nextActionHint(): string {
     if (ui.match.winner !== null) {
-        return "Match ended. Choose Play Again or Back to Menu.";
+        return RU.nextMatchEnded;
     }
     if (ui.isBotActing) {
-        return "Please wait until bot turn ends.";
+        return RU.nextWaitBot;
     }
     if (ui.phase === "build") {
         const playerId = ui.match.currentPlayer;
         const hasTargets =
-            getValidNewCells(ui.match, playerId).length > 0 || getValidRepairCells(ui.match, playerId, ui.repairUsed).length > 0;
+            getBuildTargets(ui.match, playerId).length > 0 || getRepairTargets(ui.match, playerId, ui.repairUsed).length > 0;
         if (!hasTargets) {
-            return "No valid build targets. Try repair or press Done Build.";
+            return RU.nextNoBuildTargets;
         }
     }
     if (ui.phase === "arm") {
         const arm = ui.slotResolution?.arm;
-        const armColumns = arm?.canFire ? getValidArmColumns(ui.match, ui.match.currentPlayer) : [];
+        const armColumns = arm?.canFire ? getArmTargets(ui.match, ui.match.currentPlayer) : [];
         if (!arm?.canFire || armColumns.length === 0) {
-            return `Arm is blocked: ${armFailureReason(arm)} Use Skip.`;
+            return RU.nextArmBlocked(armFailureReason(arm));
         }
     }
     switch (ui.phase) {
         case "roll":
-            return ui.match.rerollsLeftThisTurn > 0 ? "Click Reroll or Keep Hand." : "No rerolls left: click Keep Hand.";
+            return RU.nextRoll(ui.match.rerollsLeftThisTurn > 0);
         case "slots":
-            return "Set each die slot and click Commit Slots.";
+            return RU.nextSlots;
         case "build":
-            return "Apply build command, then Done Build.";
+            return RU.nextBuild;
         case "arm":
-            return "Enter a column and fire, or Skip.";
+            return RU.nextArm;
         case "end":
-            return "Click End Turn.";
+            return RU.nextEnd;
         default:
-            return "Continue current phase.";
+            return RU.nextDefault;
+    }
+}
+
+function phaseWhyHint(): string {
+    switch (ui.phase) {
+        case "roll":
+            return RU.whyRoll;
+        case "slots":
+            return RU.whySlots;
+        case "build":
+            return RU.whyBuild;
+        case "arm":
+            return RU.whyArm;
+        case "end":
+            return RU.whyEnd;
+        default:
+            return RU.whyFortify;
     }
 }
 
 function armFailureReason(arm: DiceFortsSlotResolution["arm"] | null | undefined): string {
     if (!arm || arm.max === null) {
-        return "no dice assigned to Arm";
+        return RU.armFailNoDice;
     }
     if (!arm.canFire) {
-        return `max die ${arm.max} is below fire threshold`;
+        return RU.armFailThreshold(arm.max);
     }
-    return "no valid enemy targets in any column";
+    return RU.armFailNoTargets;
 }
 
 function showNotice(message: string): void {
@@ -1095,11 +1257,17 @@ function showEndgameOverlay(): void {
     tutorialOverlayEl.classList.add("hidden");
     clearTutorialHighlights();
     if (ui.gameMode === "vsBot") {
-        endgameTitleEl.textContent = ui.match.winner === 0 ? "Victory" : "Defeat";
+        endgameTitleEl.textContent = ui.match.winner === 0 ? RU.endVictory : RU.endDefeat;
     } else {
-        endgameTitleEl.textContent = `Winner: Player ${ui.match.winner ?? "-"}`;
+        endgameTitleEl.textContent = RU.endWinnerPlayer(String(ui.match.winner ?? "-"));
     }
-    endgameStatsEl.textContent = `Rounds: ${ui.round} | Core damage P0/P1: ${matchStats.coreDamageByPlayer[0]}/${matchStats.coreDamageByPlayer[1]} | Rerolls P0/P1: ${matchStats.rerollsUsedByPlayer[0]}/${matchStats.rerollsUsedByPlayer[1]}`;
+    endgameStatsEl.textContent = RU.endStats(
+        ui.round,
+        matchStats.coreDamageByPlayer[0],
+        matchStats.coreDamageByPlayer[1],
+        matchStats.rerollsUsedByPlayer[0],
+        matchStats.rerollsUsedByPlayer[1]
+    );
     endgameOverlayEl.classList.remove("hidden");
 }
 
@@ -1121,10 +1289,10 @@ function button(label: string, onClick: () => void, disabled: boolean, ariaLabel
 
 function humanBuildError(error: string): string {
     const mapped: Record<string, string> = {
-        "spend must be >= 1": "Build: укажи spend не меньше 1.",
-        "not enough build points": "Build: не хватает build points для этого действия.",
+        "spend must be >= 1": "Build: укажи расход не меньше 1.",
+        "not enough build points": "Build: не хватает очков для этого действия.",
         "out of bounds": "Build: эта клетка вне поля.",
-        "cell is not empty": "Build: для new нужна пустая клетка.",
+        "cell is not empty": "Build: для создания нужна пустая клетка.",
         "not adjacent to your structure": "Build: строй рядом со своими блоками или ядром.",
         "nothing to repair": "Build: в этой клетке нечего чинить.",
         "not your cell": "Build: можно чинить только свои клетки.",
@@ -1146,7 +1314,7 @@ function numericInput(placeholder: string): HTMLInputElement {
 
 function showPlaytestOnboarding(): void {
     window.alert(
-        "Playtest mode enabled.\n1) Play naturally and think aloud.\n2) Try one full match.\n3) After the winner, leave 3 ratings and optional comment."
+        RU.playtestOnboarding
     );
 }
 
@@ -1158,7 +1326,7 @@ function maybeCompletePlaytest(): void {
     downloadText(`${report.sessionId}.json`, `${JSON.stringify(report, null, 2)}\n`, "application/json");
     downloadText(`${report.sessionId}.csv`, playtestReportToCsv(report), "text/csv");
     playtestExported = true;
-    addUiLog("system", "Playtest report exported (JSON + CSV).");
+    addUiLog("system", RU.playtestExported);
 }
 
 function promptPlaytestFeedback(): PlaytestFeedback | null {
@@ -1168,17 +1336,17 @@ function promptPlaytestFeedback(): PlaytestFeedback | null {
         try {
             return validateFeedbackRating(Number(raw.trim()));
         } catch {
-            window.alert("Please enter an integer from 1 to 5.");
+            window.alert(RU.playtestRatingInput);
             return askRating(question);
         }
     };
-    const rulesClarity = askRating("How clear are the rules?");
+    const rulesClarity = askRating(RU.playtestQRules);
     if (rulesClarity === null) return null;
-    const diceChoiceInterest = askRating("How interesting is dice choice?");
+    const diceChoiceInterest = askRating(RU.playtestQDice);
     if (diceChoiceInterest === null) return null;
-    const playAgainDesire = askRating("How much do you want to play again?");
+    const playAgainDesire = askRating(RU.playtestQReplay);
     if (playAgainDesire === null) return null;
-    const comment = window.prompt("Optional comment:") ?? "";
+    const comment = window.prompt(RU.playtestComment) ?? "";
     return validateFeedback({ rulesClarity, diceChoiceInterest, playAgainDesire, comment });
 }
 

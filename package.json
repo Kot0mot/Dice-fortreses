@@ -8,6 +8,7 @@
     "build": "tsc",
     "web:dev": "vite --config vite.web.config.ts",
     "web:build": "vite build --config vite.web.config.ts",
+    "v2:play": "tsc && node dist/v2Cli.js",
     "proto": "tsc && node dist/proto.js",
     "demo": "npm run proto -- --seed=6 --bot --replay=demo/replay.json && node -e \"console.log('\\nDemo finished. Try next: npm run challenge -- --help, npm run sim -- --help, or npm run web:dev for Save/Load.')\"",
     "sim": "tsc && node dist/simCli.js",

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Dice Fortresses Web MVP</title>
+        <title>Dice Fortresses — веб-версия</title>
         <link rel="stylesheet" href="./styles.css" />
     </head>
     <body>
@@ -11,52 +11,83 @@
             <section id="menu-screen" class="screen">
                 <div class="menu-card panel">
                     <h1>Dice Fortresses</h1>
-                    <p class="muted">Choose mode, tune options, and start a new match.</p>
+                    <p class="muted">Выберите режим, настройте параметры и начните матч.</p>
                     <div class="menu-actions">
-                        <button id="menu-mode-vsbot" type="button">Play vs Bot</button>
-                        <button id="menu-mode-hotseat" type="button">Hot-seat (2 players)</button>
-                        <button id="menu-how-to-play" type="button">How to Play</button>
+                        <button id="menu-mode-vsbot" type="button">Игра против бота</button>
+                        <button id="menu-mode-hotseat" type="button">Игра вдвоем за одним экраном</button>
+                        <button id="menu-how-to-play" type="button">Как играть</button>
+                        <button id="menu-v2-sandbox" type="button" class="menu-secondary">Режим v2 (песочница)</button>
                     </div>
                     <section class="settings panel">
-                        <h2>Settings</h2>
+                        <h2>Настройки</h2>
                         <label class="settings-row">
                             <span>Seed</span>
-                            <input id="menu-seed-input" type="number" inputmode="numeric" placeholder="Random seed" />
+                            <input id="menu-seed-input" type="number" inputmode="numeric" placeholder="Случайный seed" />
                         </label>
                         <label class="settings-row">
-                            <span>Sound</span>
+                            <span>Звук</span>
                             <input id="menu-sound-toggle" type="checkbox" />
                         </label>
+                        <label id="menu-bot-difficulty-row" class="settings-row">
+                            <span>Сложность бота</span>
+                            <select id="menu-bot-difficulty">
+                                <option value="easy">Лёгкий</option>
+                                <option value="medium" selected>Средний</option>
+                                <option value="hard">Сложный</option>
+                            </select>
+                        </label>
                     </section>
-                    <button id="menu-start-game" type="button" class="start-button" disabled>Start Game</button>
+                    <button id="menu-start-game" type="button" class="start-button" disabled>Начать игру</button>
                 </div>
             </section>
 
             <section id="tutorial-screen" class="screen hidden">
                 <div class="menu-card panel">
-                    <h1>How to Play</h1>
+                    <h1>Как играть</h1>
                     <div class="tutorial-blocks">
                         <section class="panel">
-                            <h2>1) Goal</h2>
-                            <p>Break the enemy core before they break yours.</p>
+                            <h2>1) Цель игры</h2>
+                            <p>Разрушьте ядро соперника раньше, чем он разрушит ваше.</p>
                         </section>
                         <section class="panel">
-                            <h2>2) Dice and Slots</h2>
-                            <p>Each die goes to Build, Fortify, or Arm and powers that phase.</p>
+                            <h2>2) Как проходит ход</h2>
+                            <p>Ход идет по этапам: бросок кубов → распределение по слотам → Build (стройка) → Arm (атака) → завершение хода. После баланс-хотфикса матчи стали динамичнее: атаковать проще, а защита не гасит весь урон.</p>
                         </section>
                         <section class="panel">
-                            <h2>3) What Each Phase Does</h2>
-                            <p>Roll and choose hand, commit slots, build/repair, fire Arm, then end turn.</p>
+                            <h2>3) Что такое Build</h2>
+                            <p>Build позволяет строить новые блоки и чинить поврежденные. Это ваша линия защиты и путь к выгодной атаке.</p>
                         </section>
                         <section class="panel">
-                            <h2>4) First Match Strategy</h2>
-                            <p>Build around your core first, keep Fortify stocked, and focus Arm on one column.</p>
+                            <h2>4) Что такое Fortify</h2>
+                            <p>Fortify — это щиты. Эффективные заряды за ход считаются как floor(среднее по слоту) - 1 (не ниже 0), поэтому защита помогает пережить атаку, но реже полностью ее обнуляет.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>5) Что такое Arm</h2>
+                            <p>Arm — атака по выбранной колонке. Выстрел доступен уже при max=3+, а дошедшее попадание по ядру всегда наносит минимум 1 урона.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>6) Зачем нужен переброс</h2>
+                            <p>Если рука неудачная, один переброс позволяет улучшить набор кубов и собрать более сильный ход.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>Пример хода: оборонительный</h2>
+                            <p>Вы видите угрозу ядру. Больше кубов кладете в Fortify и Build, усиливаете защиту, Arm используете минимально или пропускаете.</p>
+                        </section>
+                        <section class="panel">
+                            <h2>Пример хода: агрессивный</h2>
+                            <p>Вы собрали сильный Arm. Часть кубов оставляете на Build для поддержки, основной ресурс вкладываете в Arm и бьете по одной колонке до пробития.</p>
                         </section>
                     </div>
                     <div>
-                        <button id="tutorial-back" type="button">Back</button>
-                        <button id="tutorial-practice" type="button">Start Practice Match</button>
+                        <button id="tutorial-back" type="button">Назад</button>
+                        <button id="tutorial-practice" type="button">Начать тренировочный матч</button>
                     </div>
+                </div>
+            </section>
+
+            <section id="v2-sandbox-screen" class="screen hidden">
+                <div class="menu-card panel">
+                    <div id="v2-sandbox-root"></div>
                 </div>
             </section>
 
@@ -65,11 +96,11 @@
                     <div id="topbar-mode"></div>
                     <div id="topbar-round"></div>
                     <div id="topbar-player"></div>
-                    <button id="back-to-menu" type="button">Back to Menu</button>
+                    <button id="back-to-menu" type="button">В меню</button>
                 </header>
                 <div class="layout">
                     <section class="panel">
-                        <h2>Status</h2>
+                        <h2>Состояние</h2>
                         <div id="status"></div>
                         <div id="next-action" class="next-action"></div>
                         <div id="run-controls"></div>
@@ -77,12 +108,12 @@
                     </section>
 
                     <section class="panel">
-                        <h2>Roll / Reroll</h2>
+                        <h2>Бросок / переброс</h2>
                         <div id="roll-panel"></div>
                     </section>
 
                     <section class="panel">
-                        <h2>Slots</h2>
+                        <h2>Слоты</h2>
                         <div id="slots-panel"></div>
                     </section>
 
@@ -97,13 +128,13 @@
                     </section>
 
                     <section class="panel board-panel">
-                        <h2>Field</h2>
+                        <h2>Поле</h2>
                         <div id="board-legend" class="board-legend"></div>
                         <div id="board" class="board"></div>
                     </section>
 
                     <section class="panel log-panel">
-                        <h2>Turn Log</h2>
+                        <h2>Лог хода</h2>
                         <div id="log-controls"></div>
                         <div id="log-list" class="log-list"></div>
                     </section>
@@ -113,11 +144,11 @@
         <div id="notice" class="notice" aria-live="polite"></div>
         <section id="endgame-overlay" class="overlay hidden" aria-live="polite">
             <div class="overlay-card panel">
-                <h2 id="endgame-title">Victory</h2>
+                <h2 id="endgame-title">Победа</h2>
                 <div id="endgame-stats" class="muted"></div>
                 <div class="overlay-actions">
-                    <button id="play-again-btn" type="button">Play Again</button>
-                    <button id="end-back-to-menu-btn" type="button">Back to Menu</button>
+                    <button id="play-again-btn" type="button">Сыграть еще</button>
+                    <button id="end-back-to-menu-btn" type="button">В меню</button>
                 </div>
             </div>
         </section>

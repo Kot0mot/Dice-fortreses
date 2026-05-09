@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createInitialMatchState, setCell } from "../src/state.js";
 import {
+    canRunUiPhaseAction,
     filterUiLogEntries,
+    getArmTargets,
+    getBuildTargets,
+    getRepairTargets,
     getValidArmColumns,
     getValidNewCells,
     getValidRepairCells,
@@ -56,6 +60,23 @@ describe("web ui helpers", () => {
         const state = createInitialMatchState();
         expect(getValidArmColumns(state, 0)).toEqual([4, 5, 6]);
         expect(getValidArmColumns(state, 1)).toEqual([4, 5, 6]);
+    });
+
+    it("exposes target helpers without duplicating logic", () => {
+        const state = createInitialMatchState();
+        expect(getBuildTargets(state, 0)).toEqual(getValidNewCells(state, 0));
+        expect(getRepairTargets(state, 0, {})).toEqual(getValidRepairCells(state, 0, {}));
+        expect(getArmTargets(state, 0)).toEqual(getValidArmColumns(state, 0));
+    });
+
+    it("blocks click actions when phase is wrong", () => {
+        expect(canRunUiPhaseAction("roll", "build", null, false)).toBe(false);
+        expect(canRunUiPhaseAction("build", "build", null, false)).toBe(true);
+    });
+
+    it("blocks click actions while bot acts", () => {
+        expect(canRunUiPhaseAction("build", "build", null, true)).toBe(false);
+        expect(canRunUiPhaseAction("arm", "arm", 1, false)).toBe(false);
     });
 
     it("filters log entries by selected categories", () => {

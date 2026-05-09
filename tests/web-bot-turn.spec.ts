@@ -28,7 +28,7 @@ describe("web bot turn orchestration", () => {
             state = initializeTurnRerolls(state);
             const rng = new DiceFortsRng(seed);
             const hand = rollDiceFortsHand(rng);
-            const out = runBotTurn(state, hand, rng, "balanced");
+            const out = runBotTurn(state, hand, rng, "medium");
 
             expect(out.slotAssignments).toHaveLength(out.hand.length);
             expect(out.state.currentPlayer).toBe(0);

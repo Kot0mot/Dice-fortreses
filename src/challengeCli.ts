@@ -13,6 +13,7 @@ import {
     validateBuildCommand,
     type BuildCommand,
 } from "./game.js";
+import { DICE_FORTS_ARM_THRESHOLD } from "./constants.js";
 import { createDiceFortsRng } from "./random.js";
 import { applyFortifyChargesToDamage, isValidSlotPartition, resolveDiceFortsSlots, rollDiceFortsHand } from "./rules.js";
 import { getBotStrategy } from "./sim/bots.js";
@@ -148,7 +149,7 @@ function applyStageStartModifiers(state: MatchState, owner: PlayerId, mods: Runt
 
 function botShouldRerollWithPreset(hand: readonly number[], rerollsLeft: number, thresholdBonus: number): boolean {
     if (rerollsLeft <= 0) return false;
-    const threshold = 4 + thresholdBonus;
+    const threshold = DICE_FORTS_ARM_THRESHOLD + thresholdBonus;
     return hand.every((v) => v < threshold);
 }
 

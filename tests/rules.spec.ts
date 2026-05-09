@@ -40,14 +40,14 @@ describe("Dice Fortresses MVP rules", () => {
         ).toBe(false);
     });
 
-    it("resolveDiceFortsSlots: build sum, fortify floor(mean), arm threshold and damage", () => {
+    it("resolveDiceFortsSlots: build sum, fortify floor(mean)-1, arm threshold and damage", () => {
         const r = resolveDiceFortsSlots({
             build: [2, 3],
             fortify: [4, 5],
             arm: [1, 6],
         });
         expect(r.buildPoints).toBe(5);
-        expect(r.fortifyCharges).toBe(Math.floor(9 / 2));
+        expect(r.fortifyCharges).toBe(Math.max(0, Math.floor(9 / 2) - 1));
         expect(r.arm.max).toBe(6);
         expect(r.arm.canFire).toBe(true);
         expect(r.arm.damage).toBe(Math.max(1, 6 - DICE_FORTS_ARM_DAMAGE_OFFSET));
@@ -58,18 +58,23 @@ describe("Dice Fortresses MVP rules", () => {
         const r = resolveDiceFortsSlots({
             build: [],
             fortify: [],
-            arm: [1, 2, 3, 3],
+            arm: [1, 2, 2, 1],
         });
-        expect(r.arm.max).toBe(3);
+        expect(r.arm.max).toBe(2);
         expect(r.arm.canFire).toBe(false);
         expect(r.arm.damage).toBe(0);
         expect(r.arm.pierceDepth).toBe(0);
     });
 
-    it("arm fires at threshold with damage 1", () => {
-        const r = resolveDiceFortsSlots({ build: [], fortify: [], arm: [4] });
+    it("arm fires at threshold (maxArm=3) with damage 1", () => {
+        const r = resolveDiceFortsSlots({ build: [], fortify: [], arm: [3] });
         expect(r.arm.canFire).toBe(true);
         expect(r.arm.damage).toBe(Math.max(1, DICE_FORTS_ARM_THRESHOLD - DICE_FORTS_ARM_DAMAGE_OFFSET));
+    });
+
+    it("fortify charges are never negative on low averages", () => {
+        const r = resolveDiceFortsSlots({ build: [], fortify: [1], arm: [] });
+        expect(r.fortifyCharges).toBe(0);
     });
 
     it("applyFortifyChargesToDamage absorbs up to charges", () => {
