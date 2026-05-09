@@ -25,8 +25,10 @@ describe("Dice Fortresses v2 Advanced Mechanics", () => {
 
     it("should handle building technology dependencies", () => {
         let state = createInitialV2Match();
-        state.economy[0].resources.steel = 100;
-        state.economy[0].resources.power = 100;
+        state.economy[0].resources.steel = 500;
+        state.economy[0].resources.power = 500;
+        // @ts-ignore
+        state.economy[0] = { ...state.economy[0], workers: 10, workersTotal: 10 };
 
         // Ground nodes exist in createInitialV2Match
         const groundId = "ground-0-0";

@@ -304,6 +304,7 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         playUiClick();
         state = applyDiceResults(state, rolledDice);
         rolledDice = []; heldIndices.clear();
+        state = processGlobalUpdates(state);
         state = { ...state, turnPhase: "build" };
         updateTabs("build");
         syncState();
@@ -318,23 +319,15 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
     shell.querySelector("#btn-finish-build")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
-        const physState = { nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) };
-        const { collapsedBeams } = performCollapse(physState);
-        collapsedBeams.forEach(bid => {
-            const b = state.beams.get(bid);
-            if (b) {
-                const nA = state.nodes.get(b.nodeAId)!;
-                const nB = state.nodes.get(b.nodeBId)!;
-                createExplosion((nA.x + nB.x) / 2 * CELL_SIZE, (nA.y + nB.y) / 2 * CELL_SIZE, "collapse");
-            }
-        });
-        state = { ...state, nodes: physState.nodes, beams: physState.beams, buildings: physState.buildings!, turnPhase: "combat" };
+        state = processGlobalUpdates(state);
+        state = { ...state, turnPhase: "combat" };
         updateTabs("combat");
         syncState();
     }, { signal });
 
     shell.querySelector("#btn-next-turn")?.addEventListener("click", () => {
         if (!isLocalTurn()) return;
+        state = processGlobalUpdates(state);
         state = { ...state, currentPlayer: state.currentPlayer === 0 ? 1 : 0, turnPhase: "dice", rerollsLeft: 2 };
         activeWeaponIds = [];
         updateTabs("dice");
@@ -584,6 +577,14 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         const currentLoads = calculateLoads({ nodes: new Map(state.nodes), beams: new Map(state.beams), buildings: new Map(state.buildings) });
 
         for (const beam of state.beams.values()) {
+            if (beam.fireLevel > 20) {
+                const nodeA = state.nodes.get(beam.nodeAId)!;
+                const nodeB = state.nodes.get(beam.nodeBId)!;
+                const t = Math.random();
+                const x = (nodeA.x + (nodeB.x - nodeA.x) * t) * CELL_SIZE;
+                const y = (nodeA.y + (nodeB.y - nodeA.y) * t) * CELL_SIZE;
+                particles.push({ x, y, vx: (Math.random()-0.5)*2, vy: -Math.random()*3, life: 1, color: Math.random() > 0.5 ? "#f50" : "#555" });
+            }
             const nodeA = state.nodes.get(beam.nodeAId)!;
             const nodeB = state.nodes.get(beam.nodeBId)!;
             const x1 = nodeA.x * CELL_SIZE, y1 = nodeA.y * CELL_SIZE, x2 = nodeB.x * CELL_SIZE, y2 = nodeB.y * CELL_SIZE;
@@ -615,7 +616,15 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
         for (const node of state.nodes.values()) {
             ctx.fillStyle = node.id === selectedNodeId ? "#fff" : (node.isGround ? "#555" : (node.owner === 0 ? "#0f0" : "#f00"));
+
+            const isPowered = Array.from(state.beams.values()).some(b => (b.nodeAId === node.id || b.nodeBId === node.id) && b.isPowered);
+            if (isPowered) {
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = "#0af";
+            }
+
             ctx.beginPath(); ctx.arc(node.x * CELL_SIZE, node.y * CELL_SIZE, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
         }
 
         for (const b of state.buildings.values()) {
@@ -639,7 +648,13 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
 
         for (const p of particles) {
             ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
-            const size = p.color === "#555" ? 6 : 3; ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
+            const size = p.color === "#555" ? 6 : 3;
+            if (p.color !== "#555") {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = p.color;
+            }
+            ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
+            ctx.shadowBlur = 0;
         }
 
         // --- GHOST PREVIEWS ---
@@ -686,8 +701,12 @@ export function mountV2Sandbox(root: HTMLElement, opts: { readonly seed: number;
         const steelPct = Math.min(100, ((eco.steel ?? 0) / (caps.steel ?? 1)) * 100);
         const ammoPct = Math.min(100, ((eco.ammo ?? 0) / (caps.ammo ?? 1)) * 100);
 
+        const ecoRaw = state.economy[state.currentPlayer];
         info.innerHTML = `
-            <div>[SYS] PLAYER_${state.currentPlayer} | PHASE: ${state.turnPhase.toUpperCase()}</div>
+            <div style="display:flex; justify-content:space-between;">
+                <div>[SYS] PLAYER_${state.currentPlayer} | PHASE: ${state.turnPhase.toUpperCase()}</div>
+                <div>WORKERS: ${ecoRaw.workers}/${ecoRaw.workersTotal}</div>
+            </div>
             <div class="res-gauge">
                 <div class="res-item"><span>STEEL: ${eco.steel ?? 0}/${caps.steel}</span><div class="res-bar"><div class="res-fill" style="width: ${steelPct}%"></div></div></div>
                 <div class="res-item"><span>AMMO: ${eco.ammo ?? 0}/${caps.ammo}</span><div class="res-bar"><div class="res-fill" style="width: ${ammoPct}%"></div></div></div>

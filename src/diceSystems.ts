@@ -1,9 +1,34 @@
 import type { V2MatchState } from "./matchState.js";
 import { BUILDING_CATALOG, DICE_TEMPLATES } from "./catalog.js";
-import { rollCustomDie, type RolledDieResult } from "./customDie.js";
+import { rollCustomDie, type RolledDieResult, sumYields } from "./customDie.js";
 import type { Rng } from "./types.js";
 import { applyResourceGains, recalculateCaps } from "./economy.js";
-import type { ResourceBag } from "./resources.js";
+import type { ResourceBag, ResourceId } from "./resources.js";
+
+/**
+ * Проверка синергий между кубами.
+ * Если выпали определенные комбинации, даем бонусы.
+ */
+export function calculateSynergies(results: readonly RolledDieResult[]): Record<string, number> {
+    const counts = results.reduce((acc, r) => {
+        const key = r.yield.resourceId || r.yield.effectId || "none";
+        acc[key] = (acc[key] ?? 0) + 1;
+        return acc;
+    }, {} as Record<string, number>);
+
+    const bonuses: Record<string, number> = {};
+    // Industrial Chain: Steel + Power
+    if ((counts["steel"] ?? 0) >= 2 && (counts["power"] ?? 0) >= 1) {
+        bonuses["steel"] = 5;
+    }
+    // High Output: 3+ of any resource
+    for (const [rid, count] of Object.entries(counts)) {
+        if (count >= 3 && rid !== "none") {
+            bonuses[rid] = (bonuses[rid] ?? 0) + 2;
+        }
+    }
+    return bonuses;
+}
 
 /** Получить список шаблонов кубов от всех рабочих зданий игрока */
 export function getDicePoolDefinitions(state: V2MatchState, player: 0 | 1): string[] {
@@ -82,15 +107,19 @@ export function refreshBuildingOperationalStatus(state: V2MatchState): V2MatchSt
 
 /** Применение результатов кубов к экономике и состоянию */
 export function applyDiceResults(state: V2MatchState, results: readonly RolledDieResult[]): V2MatchState {
-    const gains: ResourceBag = {};
+    const gains: ResourceBag = sumYields(results);
+    const synergies = calculateSynergies(results);
     const buildings = new Map(state.buildings);
 
+    for (const [rid, amount] of Object.entries(synergies)) {
+        const id = rid as ResourceId;
+        gains[id] = (gains[id] ?? 0) + amount;
+    }
+
+    let workersGained = 0;
     for (const r of results) {
-        const rid = r.yield.resourceId;
-        const amount = r.yield.amount;
-        if (rid && amount !== undefined) {
-            gains[rid] = (gains[rid] ?? 0) + amount;
-        }
+        if (r.yield.effectId === "worker_gain" || r.yield.resourceId === "power") workersGained += 1; // Simplified gain for testing
+
         if (r.yield.effectId === "disable_generator") {
             // Выводим случайный генератор игрока из строя на 1 ход
             const playerGenerators = Array.from(buildings.values()).filter(
@@ -105,7 +134,14 @@ export function applyDiceResults(state: V2MatchState, results: readonly RolledDi
 
     const caps = recalculateCaps(state, state.currentPlayer);
     const currentEco = { ...state.economy[state.currentPlayer], caps };
-    const nextEco = applyResourceGains(currentEco, gains);
+    let nextEco = applyResourceGains(currentEco, gains);
+
+    // Update workers
+    nextEco = {
+        ...nextEco,
+        workersTotal: nextEco.workersTotal + workersGained,
+        workers: nextEco.workers + workersGained
+    };
 
     const newEconomy = [...state.economy] as [any, any];
     newEconomy[state.currentPlayer] = nextEco;

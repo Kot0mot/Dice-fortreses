@@ -3,6 +3,8 @@ import type { ResourceBag, ResourceId } from "./resources.js";
 export interface PlayerEconomy {
     readonly resources: ResourceBag;
     readonly caps: Partial<Record<ResourceId, number>>;
+    readonly workers: number;
+    readonly workersTotal: number;
 }
 
 const DEFAULT_CAP = 50;
@@ -20,7 +22,7 @@ export function defaultPlayerCaps(): Partial<Record<ResourceId, number>> {
 }
 
 export function emptyEconomy(): PlayerEconomy {
-    return { resources: {}, caps: defaultPlayerCaps() };
+    return { resources: {}, caps: defaultPlayerCaps(), workers: 0, workersTotal: 0 };
 }
 
 import { BUILDING_CATALOG } from "./catalog.js";

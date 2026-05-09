@@ -1,8 +1,9 @@
 import { V2_GRID_HEIGHT, V2_GRID_WIDTH } from "./constants.js";
-import { BUILDING_CATALOG } from "./catalog.js";
+import { BUILDING_CATALOG, STARTER_CUBE } from "./catalog.js";
 import type { OwnerId, V2Node, V2Beam, BuildingInstance, BeamMaterialId } from "./mapTypes.js";
 import { emptyEconomy, type PlayerEconomy } from "./economy.js";
 import type { ResourceId } from "./resources.js";
+import type { CustomDieDefinition } from "./customDie.js";
 
 export interface V2MatchState {
     readonly width: number;
@@ -11,6 +12,7 @@ export interface V2MatchState {
     readonly beams: ReadonlyMap<string, V2Beam>;
     readonly buildings: ReadonlyMap<string, BuildingInstance>;
     readonly economy: readonly [PlayerEconomy, PlayerEconomy];
+    readonly playerDice: readonly [CustomDieDefinition[], CustomDieDefinition[]];
     readonly currentPlayer: OwnerId;
     readonly turnPhase: "dice" | "build" | "combat";
     readonly rerollsLeft: number;
@@ -46,6 +48,10 @@ export function createInitialV2Match(): V2MatchState {
         hp: BUILDING_CATALOG["core_generator"].hp,
         isOperational: true,
         level: 1,
+        fireLevel: 0,
+        workersAssigned: 0,
+        isPowered: true,
+        modules: [],
     };
 
     const nodeP1 = nodes.get(`ground-1-${w - 1}`)!;
@@ -57,6 +63,10 @@ export function createInitialV2Match(): V2MatchState {
         hp: BUILDING_CATALOG["core_generator"].hp,
         isOperational: true,
         level: 1,
+        fireLevel: 0,
+        workersAssigned: 0,
+        isPowered: true,
+        modules: [],
     };
 
     buildings.set(b0.id, b0);
@@ -69,6 +79,7 @@ export function createInitialV2Match(): V2MatchState {
         beams,
         buildings,
         economy: [emptyEconomy(), emptyEconomy()],
+        playerDice: [[{...STARTER_CUBE}, {...STARTER_CUBE}], [{...STARTER_CUBE}, {...STARTER_CUBE}]],
         currentPlayer: 0,
         turnPhase: "dice",
         rerollsLeft: 2,
@@ -129,6 +140,8 @@ export function tryPlaceBeam(state: V2MatchState, nodeAId: string, nodeBId: stri
         hp: mat.hp,
         owner,
         currentLoad: 0,
+        fireLevel: 0,
+        isPowered: false,
     });
 
     const nextEco: PlayerEconomy = { ...eco, resources: { ...eco.resources, [rid]: currentRes - mat.cost.amount } };
@@ -153,6 +166,14 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
     }
 
     const eco = state.economy[owner];
+
+    // Check workers
+    const workersNeeded = def.workersRequired ?? 0;
+    if (eco.workers < workersNeeded) return state;
+
+    // Check power (simple global check for build phase, grid check is in physics/update)
+    const powerNeeded = def.powerRequired ?? 0;
+    if ((eco.resources.power ?? 0) < powerNeeded) return state;
     const isEarlyTechActive = owner === 0 && campaignPerks.includes("perk_early_tech") && defId === "tech_station";
 
     for (const [rid, amount] of Object.entries(def.cost)) {
@@ -172,6 +193,10 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
         hp: def.hp,
         isOperational: true,
         level: 1,
+        fireLevel: 0,
+        workersAssigned: 0,
+        isPowered: false,
+        modules: [],
     });
 
     const nextRes = { ...eco.resources };
@@ -180,11 +205,67 @@ export function tryPlaceBuilding(state: V2MatchState, defId: string, nodeIds: st
         if (isEarlyTechActive) finalCost = Math.floor(finalCost * 0.5);
         nextRes[rid as ResourceId] = (nextRes[rid as ResourceId] ?? 0) - finalCost;
     }
-    const nextEco: PlayerEconomy = { ...eco, resources: nextRes };
+    const nextEco: PlayerEconomy = {
+        ...eco,
+        resources: nextRes,
+        workers: eco.workers - workersNeeded
+    };
     const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
     nextEconomies[owner] = nextEco;
 
     return { ...state, buildings, economy: nextEconomies };
+}
+
+import { updateFire, updatePowerGrid, performCollapse, applySuppressors } from "./physics.js";
+
+/**
+ * Вызывается в конце хода или фазы для обновления физики, огня и энергии.
+ */
+export function processGlobalUpdates(state: V2MatchState): V2MatchState {
+    const physState = {
+        nodes: new Map(state.nodes),
+        beams: new Map(state.beams),
+        buildings: new Map(state.buildings)
+    };
+
+    updatePowerGrid(physState);
+    updateFire(physState);
+    applySuppressors(physState);
+    performCollapse(physState);
+
+    return {
+        ...state,
+        nodes: physState.nodes,
+        beams: physState.beams,
+        buildings: physState.buildings
+    };
+}
+
+/**
+ * Кастомизация куба. Позволяет заменить грань на выбранную.
+ */
+export function tryForgeDie(state: V2MatchState, dieIndex: number, faceIndex: number, newFace: any): V2MatchState {
+    const p = state.currentPlayer;
+    const dice = [...state.playerDice[p]];
+    const die = dice[dieIndex];
+    if (!die) return state;
+
+    const cost = 20; // Фиксированная стоимость ковки
+    const eco = state.economy[p];
+    if ((eco.resources.tech_fragment ?? 0) < cost) return state;
+
+    const nextFaces = [...die.faces];
+    nextFaces[faceIndex] = newFace;
+    dice[dieIndex] = { ...die, faces: nextFaces };
+
+    const nextDice = [...state.playerDice] as [CustomDieDefinition[], CustomDieDefinition[]];
+    nextDice[p] = dice;
+
+    const nextEco = { ...eco, resources: { ...eco.resources, tech_fragment: eco.resources.tech_fragment! - cost } };
+    const nextEconomies = [...state.economy] as [PlayerEconomy, PlayerEconomy];
+    nextEconomies[p] = nextEco;
+
+    return { ...state, playerDice: nextDice, economy: nextEconomies };
 }
 
 export function tryRepairBuilding(state: V2MatchState, buildingId: string): V2MatchState {

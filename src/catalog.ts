@@ -63,6 +63,8 @@ export interface BuildingDefV2 {
     readonly reloadTime?: number;
     readonly resourceCapBonus?: Partial<Record<ResourceId, number>>;
     readonly techRequired?: string;
+    readonly powerRequired?: number;
+    readonly workersRequired?: number;
 }
 
 export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
@@ -144,6 +146,48 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         damage: 40,
         damageType: "energy",
         techRequired: "tech_station",
+        powerRequired: 10,
+        workersRequired: 1,
+    },
+    emp_launcher: {
+        id: "emp_launcher",
+        name: "ЭМИ-установка",
+        kind: "weapon",
+        hp: 100,
+        weight: 25,
+        cost: { steel: 40, power: 30 },
+        ammoPerShot: 2,
+        damage: 5,
+        damageType: "emp",
+        techRequired: "tech_station",
+        powerRequired: 20,
+        workersRequired: 2,
+    },
+    flak_cannon: {
+        id: "flak_cannon",
+        name: "Зенитка (Флак)",
+        kind: "weapon",
+        hp: 200,
+        weight: 45,
+        cost: { steel: 50, ammo: 20 },
+        ammoPerShot: 5,
+        damage: 15,
+        damageType: "blast",
+        workersRequired: 3,
+    },
+    railgun: {
+        id: "railgun",
+        name: "Рельсотрон",
+        kind: "weapon",
+        hp: 300,
+        weight: 80,
+        cost: { steel: 100, power: 50, tech_fragment: 30 },
+        ammoPerShot: 10,
+        damage: 150,
+        damageType: "kinetic",
+        techRequired: "tech_station",
+        powerRequired: 50,
+        workersRequired: 4,
     },
     tech_station: {
         id: "tech_station",
@@ -152,6 +196,7 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         hp: 120,
         weight: 25,
         cost: { steel: 20, power: 10 },
+        workersRequired: 1,
     },
     storage_steel: {
         id: "storage_steel",
@@ -181,6 +226,26 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         resourceCapBonus: { power: 50 },
         techRequired: "power_plant",
     },
+    foundry_upgrade: {
+        id: "foundry_upgrade",
+        name: "Доменная печь",
+        kind: "tech_station",
+        hp: 200,
+        weight: 40,
+        cost: { steel: 60, tech_fragment: 15 },
+        workersRequired: 2,
+    },
+    advanced_foundry: {
+        id: "advanced_foundry",
+        name: "Алле-завод",
+        kind: "generator",
+        hp: 300,
+        weight: 50,
+        cost: { steel: 80, power: 40 },
+        diceContribution: [{ templateId: "mega_steel_die", count: 1 }],
+        techRequired: "foundry_upgrade",
+        workersRequired: 4,
+    },
     repair_station: {
         id: "repair_station",
         name: "Ремонтная станция",
@@ -188,6 +253,35 @@ export const BUILDING_CATALOG: Record<string, BuildingDefV2> = {
         hp: 120,
         weight: 15,
         cost: { steel: 10, tech_fragment: 5 },
+    },
+    shield_generator: {
+        id: "shield_generator",
+        name: "Генератор поля",
+        kind: "tech_station",
+        hp: 100,
+        weight: 40,
+        cost: { steel: 50, power: 100, tech_fragment: 20 },
+        powerRequired: 40,
+        workersRequired: 2,
+    },
+    solar_panel: {
+        id: "solar_panel",
+        name: "Солнечная панель",
+        kind: "generator",
+        hp: 50,
+        weight: 5,
+        cost: { steel: 10, tech_fragment: 5 },
+        diceContribution: [{ templateId: "power_die", count: 1 }],
+    },
+    fire_suppressor: {
+        id: "fire_suppressor",
+        name: "Пожаротушитель",
+        kind: "tech_station",
+        hp: 100,
+        weight: 15,
+        cost: { steel: 20, power: 10 },
+        powerRequired: 5,
+        workersRequired: 1,
     }
 };
 
@@ -244,7 +338,7 @@ export const ADDITIONAL_DICE: CustomDieDefinition[] = [
             { resourceId: "ammo", amount: 2 },
             { resourceId: "ammo", amount: 2 },
             { resourceId: "ore", amount: 1 },
-            { resourceId: "steel", amount: 1 },
+            { effectId: "worker_gain" },
             { effectId: "disable_generator" },
         ]
     },

@@ -92,16 +92,29 @@ export function fireWeapon(
     let finalDamage = def.damage ?? 0;
     const damageType = def.damageType ?? "kinetic";
 
+    // Module effects
+    if (weapon.modules.includes("overcharge_coil")) {
+        finalDamage *= 1.5;
+    }
+
     const buildings = new Map(nextState.buildings);
     for (const [bid, b] of buildings) {
         if (b.owner !== weapon.owner) {
             const node = nextState.nodes.get(b.nodeIds[0]!);
             if (node && Math.round(node.x) === targetX && Math.round(node.y) === targetY) {
                 hitBuildingId = bid;
-                // Buildings don't have resistances yet, using raw damage
-                const nextHp = b.hp - finalDamage;
-                if (nextHp <= 0) buildings.delete(bid);
-                else buildings.set(bid, { ...b, hp: nextHp });
+
+                if (damageType === "emp") {
+                    // EMP disables operational status instead of dealing heavy HP damage
+                    buildings.set(bid, { ...b, isOperational: false, hp: b.hp - 10 });
+                } else {
+                    const nextHp = b.hp - finalDamage;
+                    let fireLevel = b.fireLevel;
+                    if (damageType === "fire") fireLevel = Math.min(100, fireLevel + 50);
+
+                    if (nextHp <= 0) buildings.delete(bid);
+                    else buildings.set(bid, { ...b, hp: nextHp, fireLevel });
+                }
                 break;
             }
         }
@@ -119,11 +132,16 @@ export function fireWeapon(
                     hitBeamId = bid;
                     const mat = BEAM_MATERIALS[beam.materialId];
                     const multiplier = mat.resistances[damageType] ?? 1.0;
-                    const dmg = finalDamage * multiplier;
+                    let dmg = finalDamage * multiplier;
+
+                    if (damageType === "emp") dmg = 5; // Minimal structural damage for EMP
 
                     const nextHp = beam.hp - dmg;
+                    let fireLevel = beam.fireLevel;
+                    if (damageType === "fire") fireLevel = Math.min(100, fireLevel + (50 * mat.flammability));
+
                     if (nextHp <= 0) beams.delete(bid);
-                    else beams.set(bid, { ...beam, hp: nextHp });
+                    else beams.set(bid, { ...beam, hp: nextHp, fireLevel });
                     break;
                 }
             }
