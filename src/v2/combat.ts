@@ -1,0 +1,99 @@
+import type { V2MatchState } from "./matchState.js";
+import { BUILDING_CATALOG } from "./catalog.js";
+import type { OwnerId } from "./mapTypes.js";
+
+export interface WeaponGroup {
+    readonly weaponIds: string[];
+}
+
+export interface FiringResult {
+    readonly shooterId: string;
+    readonly targetX: number;
+    readonly targetY: number;
+    readonly damageDealt: number;
+    readonly hitBuildingId?: string;
+    readonly hitBeamId?: string;
+}
+
+/** Расчет сектора огня (конус).
+ * Для простоты: пушки игрока 0 стреляют вверх, игрока 1 - вниз.
+ * Сектор задается углом от вертикали.
+ */
+export function isWithinFiringCone(
+    shooterX: number, shooterY: number,
+    targetX: number, targetY: number,
+    owner: OwnerId,
+    coneHalfAngleDeg: number = 45
+): boolean {
+    const dx = targetX - shooterX;
+    const dy = targetY - shooterY;
+
+    // Вектор направления (0, -1) для P0 и (0, 1) для P1
+    const dirY = owner === 0 ? -1 : 1;
+
+    // Угол между вектором на цель и направлением "вперед"
+    const angleRad = Math.atan2(Math.abs(dx), dy * dirY);
+    const angleDeg = (angleRad * 180) / Math.PI;
+
+    return angleDeg <= coneHalfAngleDeg;
+}
+
+/** Логика выстрела */
+export function fireWeapon(
+    state: V2MatchState,
+    weaponId: string,
+    targetX: number,
+    targetY: number
+): { nextState: V2MatchState; result?: FiringResult } {
+    const weapon = state.buildings.get(weaponId);
+    if (!weapon || !weapon.isOperational) return { nextState: state };
+
+    const def = BUILDING_CATALOG[weapon.defId];
+    if (def.kind !== "weapon") return { nextState: state };
+
+    const eco = state.economy[weapon.owner];
+    const ammoNeeded = def.ammoPerShot ?? 1;
+
+    if ((eco.resources.ammo ?? 0) < ammoNeeded) {
+        return { nextState: state }; // Недостаточно патронов
+    }
+
+    // Тратим боезапас
+    const nextEco = {
+        ...eco,
+        resources: { ...eco.resources, ammo: eco.resources.ammo! - ammoNeeded }
+    };
+    const nextEconomies = [...state.economy] as [any, any];
+    nextEconomies[weapon.owner] = nextEco;
+
+    let nextState = { ...state, economy: nextEconomies };
+
+    // Проверяем попадание (упрощенно по координатам)
+    let hitBuildingId: string | undefined;
+    const buildings = new Map(nextState.buildings);
+    for (const [bid, b] of buildings) {
+        if (b.owner !== weapon.owner) {
+            const node = nextState.nodes.get(b.nodeIds[0]!);
+            if (node && node.x === targetX && node.y === targetY) {
+                hitBuildingId = bid;
+                const nextHp = b.hp - (def.damage ?? 0);
+                if (nextHp <= 0) buildings.delete(bid);
+                else buildings.set(bid, { ...b, hp: nextHp });
+                break;
+            }
+        }
+    }
+
+    nextState = { ...nextState, buildings };
+
+    return {
+        nextState,
+        result: {
+            shooterId: weaponId,
+            targetX,
+            targetY,
+            damageDealt: def.damage ?? 0,
+            hitBuildingId,
+        }
+    };
+}

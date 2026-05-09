@@ -184,6 +184,72 @@ button:disabled {
     gap: 8px;
 }
 
+.v2-sandbox-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.v2-canvas {
+    background: #000;
+    border: 1px solid #333;
+    display: block;
+    margin: 0 auto;
+    cursor: crosshair;
+}
+
+.v2-bottom-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.v2-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.v2-tab {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.v2-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    background: #111;
+    border-radius: 4px;
+}
+
+.v2-toolbar.hidden {
+    display: none;
+}
+
+.v2-dice-panel {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 50px;
+}
+
+.v2-die {
+    padding: 8px;
+    background: #222;
+    border: 1px solid #444;
+}
+
+.v2-die.held {
+    border-color: #86f0b4;
+    background: #1d3d2d;
+}
+
+.v2-toolbar button.active {
+    border-color: #86f0b4;
+    background: #1d3d2d;
+}
+
 .settings {
     background: #131a30;
 }

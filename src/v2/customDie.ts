@@ -1,33 +1,22 @@
 import type { Rng } from "../types.js";
-import type { DiceFaceYield } from "./diceFaces.js";
-import type { ResourceId } from "./resources.js";
+import type { DiceFaceEffect } from "./catalog.js";
 
 export interface CustomDieDefinition {
     readonly id: string;
-    readonly faces: readonly DiceFaceYield[];
+    readonly faces: readonly DiceFaceEffect[];
 }
 
 export interface RolledDieResult {
     readonly dieId: string;
     readonly templateId: string;
     readonly faceIndex: number;
-    readonly yield: DiceFaceYield;
+    readonly yield: DiceFaceEffect;
 }
 
-/** Валидация: ровно 6 граней, amount >= 1 целое, resourceId уникален в кубе. */
+/** Валидация: ровно 6 граней. */
 export function assertValidDieDefinition(def: CustomDieDefinition): void {
     if (def.faces.length !== 6) {
         throw new Error(`Куб ${def.id}: нужно ровно 6 граней, сейчас ${def.faces.length}`);
-    }
-    const seen = new Set<ResourceId>();
-    for (const f of def.faces) {
-        if (!Number.isInteger(f.amount) || f.amount < 1) {
-            throw new Error(`Куб ${def.id}: некорректное amount на грани ${f.resourceId}`);
-        }
-        if (seen.has(f.resourceId)) {
-            throw new Error(`Куб ${def.id}: дубликат ресурса ${f.resourceId} на грани`);
-        }
-        seen.add(f.resourceId);
     }
 }
 
@@ -47,7 +36,9 @@ export function sumYields(results: readonly RolledDieResult[]): Record<string, n
     const out: Record<string, number> = {};
     for (const r of results) {
         const k = r.yield.resourceId;
-        out[k] = (out[k] ?? 0) + r.yield.amount;
+        if (k && r.yield.amount) {
+            out[k] = (out[k] ?? 0) + r.yield.amount;
+        }
     }
     return out;
 }

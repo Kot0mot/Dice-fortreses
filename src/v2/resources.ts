@@ -5,6 +5,7 @@ export type ResourceId =
     | "ore"
     | "tech_fragment"
     | "alloy"
-    | "fuel";
+    | "fuel"
+    | "ammo"; // Добавили боезапас
 
 export type ResourceBag = Partial<Record<ResourceId, number>>;
