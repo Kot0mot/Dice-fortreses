@@ -6,6 +6,11 @@ export interface WeaponGroup {
     readonly weaponIds: string[];
 }
 
+export interface ProjectilePathPoint {
+    readonly x: number;
+    readonly y: number;
+}
+
 export interface FiringResult {
     readonly shooterId: string;
     readonly targetX: number;
@@ -13,6 +18,7 @@ export interface FiringResult {
     readonly damageDealt: number;
     readonly hitBuildingId?: string;
     readonly hitBeamId?: string;
+    readonly path: ProjectilePathPoint[];
 }
 
 /** Расчет сектора огня (конус).
@@ -46,6 +52,19 @@ export function fireWeapon(
 ): { nextState: V2MatchState; result?: FiringResult } {
     const weapon = state.buildings.get(weaponId);
     if (!weapon || !weapon.isOperational) return { nextState: state };
+
+    const shooterNode = state.nodes.get(weapon.nodeIds[0]!)!;
+    const path: ProjectilePathPoint[] = [];
+    const steps = 20;
+
+    // Генерируем параболическую траекторию
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = shooterNode.x + (targetX - shooterNode.x) * t;
+        const peakHeight = 2;
+        const y = shooterNode.y + (targetY - shooterNode.y) * t - peakHeight * Math.sin(Math.PI * t);
+        path.push({ x, y });
+    }
 
     const def = BUILDING_CATALOG[weapon.defId];
     if (def.kind !== "weapon") return { nextState: state };
@@ -93,6 +112,7 @@ export function fireWeapon(
             targetY,
             damageDealt: def.damage ?? 0,
             hitBuildingId,
+            path,
         }
     };
 }
