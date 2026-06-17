@@ -1,0 +1,10 @@
+# Godot-specific ignores
+.godot/
+*.import
+export_presets.godot
+
+# .NET-specific ignores
+bin/
+obj/
+*.sln
+*.csproj.user
